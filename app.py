@@ -8,7 +8,7 @@ from google.oauth2.service_account import Credentials
 
 # --- STREAMLIT UI SETUP ---
 st.set_page_config(page_title="Yashasvi Cloud Console", page_icon="💎", layout="wide")
-st.title("💎 Yashasvi Imitations — Cloud Terminal")
+st.title("💎 Yashasvi Imitations — Billing and Inventory Management")
 st.write("---")
 
 # --- BULLETPROOF BASE64 DECRYPTION ENGINE ---
@@ -80,7 +80,6 @@ except Exception as e:
     st.stop()
 
 # --- DYNAMIC COLUMN NAME RESOLVER ---
-# This matches columns case-insensitively to map perfectly back to your sheet names
 def resolve_column(df, keywords, default_name):
     for col in df.columns:
         if any(kw in col.lower() for kw in keywords):
@@ -90,9 +89,17 @@ def resolve_column(df, keywords, default_name):
 if not df_inventory.empty:
     item_code_col = resolve_column(df_inventory, ["item code", "sku"], "Item Code")
     item_type_col = resolve_column(df_inventory, ["item type", "category"], "Item Type")
-    remaining_qty_col = resolve_column(df_inventory, ["remaining", "qty", "quantity", "stock"], "Remaining Quantity")
     selling_price_col = resolve_column(df_inventory, ["selling", "price"], "Selling Price")
     total_col = resolve_column(df_inventory, ["total"], "Total")
+    
+    # CRITICAL FIX: Explicitly target "Remaining Quantity" case-insensitively, avoiding generic "Quantity"
+    remaining_qty_col = None
+    for col in df_inventory.columns:
+        if "remaining" in col.lower():
+            remaining_qty_col = col
+            break
+    if not remaining_qty_col:
+        remaining_qty_col = resolve_column(df_inventory, ["qty", "quantity", "stock"], "Remaining Quantity")
 
     # Clean out empty spreadsheet artifact rows at the bottom
     df_inventory = df_inventory[df_inventory[item_code_col].astype(str).str.strip() != ""]
@@ -126,9 +133,9 @@ with p1:
         use_container_width=True, 
         hide_index=True,
         column_config={
-            remaining_qty_col: st.column_config.NumberColumn("Quantity Available", width="small"),
-            item_code_col: st.column_config.TextColumn("Item Code", width="small"),
-            item_type_col: st.column_config.TextColumn("Item Type / Category", width="large")
+            remaining_qty_col: st.column_config.NumberColumn("Quantity Available", width=140),
+            item_code_col: st.column_config.TextColumn("Item Code", width=100),
+            item_type_col: st.column_config.TextColumn("Item Type / Category", width=260)
         }
     )
 
@@ -179,7 +186,7 @@ with p2:
                         total_bill_amount += final_selling_price
                         next_order_id = len(df_sales) + len(new_sales_entries) + 1
                         
-                        # Apply live stock deduction values
+                        # FIXED: Mutating ONLY remaining_qty_col, keeping 'Quantity' pristine
                         df_inventory.at[row_idx, remaining_qty_col] = str(current_stock - 1)
                         if total_col in df_inventory.columns:
                             df_inventory.at[row_idx, total_col] = str(int(df_inventory.at[row_idx, remaining_qty_col]) * base_price_val)
@@ -194,7 +201,6 @@ with p2:
                         df_sales = pd.concat([df_sales, pd.DataFrame(new_sales_entries)], ignore_index=True)
                     
                     try:
-                        # Re-sync modified states back to Google Drive
                         inventory_worksheet.clear()
                         inventory_worksheet.update('A1', [df_inventory.columns.values.tolist()] + df_inventory.astype(str).values.tolist())
                         
@@ -216,7 +222,21 @@ with p3:
         stat_col1, stat_col2 = st.columns(2)
         stat_col1.metric("Total Items Sold", f"{len(df_sales)} Units")
         stat_col2.metric("Gross Revenue Realized", f"₹{revenue_sum:,.2f}")
-        st.dataframe(df_sales.sort_values(by="Order ID", ascending=False), use_container_width=True, hide_index=True)
+        
+        st.dataframe(
+            df_sales.sort_values(by="Order ID", ascending=False), 
+            use_container_width=True, 
+            hide_index=True,
+            column_config={
+                "Order ID": st.column_config.TextColumn("ID", width=60),
+                "Item Code": st.column_config.TextColumn("Item Code", width=100),
+                "Item Type": st.column_config.TextColumn("Item Type / Category", width=200),
+                "Original Price (₹)": st.column_config.NumberColumn("Price", width=90),
+                "Discount (%)": st.column_config.NumberColumn("Disc%", width=80),
+                "Final Revenue (₹)": st.column_config.NumberColumn("Revenue", width=100),
+                "Timestamp": st.column_config.TextColumn("Date & Time", width=160)
+            }
+        )
 
 # --- PAGE 4: FINANCIAL HEALTH CHART ---
 with p4:
