@@ -36,12 +36,12 @@ def get_gspread_client():
 client = get_gspread_client()
 SPREADSHEET_ID = "1hcxENlBErHhNMMxuv_rdtqsSnXaRp5af2rhflrrwDBg"
 
+# Initialize empty diagnostics variables to prevent NameErrors inside the except block
+all_worksheets = []
+
 try:
     sheet = client.open_by_key(SPREADSHEET_ID)
-    
-    # Track workbooks for the live visual debugger
     all_worksheets = sheet.worksheets()
-    available_tab_names = [w.title for w in all_worksheets]
     
     # Map sheets by position (0-indexed: 1 is the 2nd tab, 2 is the 3rd tab)
     inventory_worksheet = sheet.get_worksheet(1)
@@ -51,7 +51,7 @@ try:
         st.error(f"❌ Position Mapping Error: Your workbook only has {len(all_worksheets)} tab(s). It must have at least 3 tabs.")
         st.stop()
 
-    # BULLETPROOF DATA INGESTION: Read raw strings to bypass column header formatting crashes
+    # Read raw string matrices to prevent column header formatting crashes
     raw_inv_data = inventory_worksheet.get_all_values()
     if raw_inv_data:
         df_inventory = pd.DataFrame(raw_inv_data[1:], columns=raw_inv_data[0])
@@ -67,16 +67,19 @@ try:
 except Exception as e:
     st.error(f"❌ Structural Ingestion Failure: {e}")
     
-    # LIVE DIAGNOSTIC DEBUGGER FOR MOBILE
+    # SAFE LIVE DIAGNOSTIC DEBUGGER FOR MOBILE
     st.markdown("### 🛠️ Live Workbook Schema Diagnostic Dump")
-    try:
+    if not all_worksheets:
+        st.warning("⚠️ Could not connect to the file at all. Please verify your SPREADSHEET_ID and make sure the Service Account email is added as an **Editor** in the Google Sheet's Share menu.")
+    else:
         st.info(f"Total Detected Tabs: `{len(all_worksheets)}`")
         for idx, w_sheet in enumerate(all_worksheets):
-            first_row = w_sheet.get_all_values()
-            headers = first_row[0] if first_row else ["EMPTY SHEET"]
-            st.markdown(f"**Tab Position {idx + 1}:** `{w_sheet.title}` | **Detected Headers:** `{headers}`")
-    except Exception as diagnostic_err:
-        st.warning(f"Could not pull deep diagnostics: {diagnostic_err}")
+            try:
+                first_row = w_sheet.get_all_values()
+                headers = first_row[0] if first_row else ["EMPTY SHEET"]
+                st.markdown(f"**Tab Position {idx + 1}:** `{w_sheet.title}` | **Detected Headers:** `{headers}`")
+            except Exception as row_err:
+                st.markdown(f"**Tab Position {idx + 1}:** `{w_sheet.title}` | *Could not read row headers: {row_err}*")
     st.stop()
 
 # Strip accidental whitespaces from headers to prevent KeyErrors
@@ -103,7 +106,6 @@ with p1:
     if df_inventory.empty:
         st.info("Your remote inventory repository appears to be empty.")
     else:
-        # Cast metrics cleanly to handle raw string conversions from sheets
         total_units = int(pd.to_numeric(df_inventory["Remaining Quantity"], errors='coerce').sum()) if "Remaining Quantity" in df_inventory.columns else 0
         st.metric(label="Total Volumetric Units in Stock", value=f"{total_units} units")
         st.dataframe(
@@ -178,7 +180,6 @@ with p2:
                         df_sales = pd.concat([df_sales, pd.DataFrame(new_sales_entries)], ignore_index=True)
                     
                     try:
-                        # Clear and rewrite rows safely as strings
                         inventory_worksheet.clear()
                         inventory_worksheet.update('A1', [df_inventory.columns.values.tolist()] + df_inventory.astype(str).values.tolist())
                         
