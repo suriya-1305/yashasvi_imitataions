@@ -19,7 +19,6 @@ def get_gspread_client():
         st.stop()
     
     try:
-        # Decode the uncorrupted base64 payload straight back into raw JSON bytes
         raw_json_bytes = base64.b64decode(st.secrets["encoded_creds"])
         creds_dict = json.loads(raw_json_bytes)
             
@@ -35,13 +34,22 @@ def get_gspread_client():
 
 # Initialize the authenticated connection
 client = get_gspread_client()
+
+# CRITICAL: Double check that this matches your newly converted Google Sheet ID from your browser address bar
 SPREADSHEET_ID = "1hcxENlBErHhNMMxuv_rdtqsSnXaRp5af2rhflrrwDBg"
 
 try:
     sheet = client.open_by_key(SPREADSHEET_ID)
-    inventory_worksheet = sheet.worksheet("Inventory")
-    sales_worksheet = sheet.worksheet("Sales Log")
     
+    # FIXED: Fetching by index position so sheet names don't matter!
+    # get_worksheet(1) targets your 2nd tab. get_worksheet(2) targets your 3rd tab.
+    inventory_worksheet = sheet.get_worksheet(1)
+    sales_worksheet = sheet.get_worksheet(2)
+    
+    if inventory_worksheet is None or sales_worksheet is None:
+        st.error("❌ Position Error: Your Google Sheet must have at least 3 tabs total.")
+        st.stop()
+        
     # Safely pull live snapshots from sheets
     records_inv = inventory_worksheet.get_all_records()
     df_inventory = pd.DataFrame(records_inv) if records_inv else pd.DataFrame(columns=["Item Type", "Item Code", "Selling Price", "Remaining Quantity", "Total"])
@@ -49,8 +57,8 @@ try:
     records_sales = sales_worksheet.get_all_records()
     df_sales = pd.DataFrame(records_sales) if records_sales else pd.DataFrame(columns=["Order ID", "Item Code", "Item Type", "Original Price (₹)", "Discount (%)", "Final Revenue (₹)", "Timestamp"])
 except Exception as e:
-    st.error(f"❌ Error communicating with target tabs: {e}")
-    st.markdown("💡 *Ensure your Google Sheet tabs are named exactly: **`Inventory`** and **`Sales Log`***")
+    st.error(f"❌ Position Mapping Error: {e}")
+    st.markdown("💡 *Double check that your 2nd tab contains inventory headers and your 3rd tab is set up for logging orders.*")
     st.stop()
 
 # Strip accidental whitespaces from headers
@@ -150,6 +158,7 @@ with p2:
                         df_sales = pd.concat([df_sales, pd.DataFrame(new_sales_entries)], ignore_index=True)
                     
                     try:
+                        # Update the sheets atomically based on their indices
                         inventory_worksheet.clear()
                         inventory_worksheet.update('A1', [df_inventory.columns.values.tolist()] + df_inventory.astype(str).values.tolist())
                         
