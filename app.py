@@ -1,4 +1,3 @@
-import json
 from datetime import datetime
 import pandas as pd
 import streamlit as st
@@ -6,24 +5,35 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 # --- STREAMLIT UI SETUP ---
-st.set_page_config(page_title="Yashasvi Billing Management", page_icon="💎", layout="wide")
-st.title("💎 Yashasvi Imitations — Billing and Inventory Management")
+st.set_page_config(page_title="Yashasvi Cloud Console", page_icon="💎", layout="wide")
+st.title("💎 Yashasvi Imitations —  Billing and Inventory Management")
 st.write("---")
 
-# --- BULLETPROOF PROGRAMMATIC AUTHORIZATION ENGINE ---
+# --- DEFENSIVE ENGINE FOR KEY SANITIZATION ---
 @st.cache_resource
 def get_gspread_client():
     if "gspread_creds" not in st.secrets:
-        st.error("🔒 Cloud Database Configuration Missing! Please configure your raw JSON credentials inside your Secrets panel.")
+        st.error("🔒 Cloud Database Configuration Missing! Please check your Streamlit Secrets layout panel.")
         st.stop()
     
     try:
-        # Ingest the string directly from secrets
-        creds_dict = json.loads(st.secrets["gspread_creds"])
+        # Streamlit automatically converts [gspread_creds] from TOML into a Python dictionary
+        creds_dict = dict(st.secrets["gspread_creds"])
         
-        # Explicitly patch any escaped newline anomalies programmatically
-        if "private_key" in creds_dict:
-            creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+        # Surgical extraction and cleanup of the raw key string
+        raw_key = str(creds_dict.get("private_key", ""))
+        raw_key = raw_key.replace("\\n", "\n")
+        
+        header = "-----BEGIN PRIVATE KEY-----"
+        footer = "-----END PRIVATE KEY-----"
+        
+        if header in raw_key and footer in raw_key:
+            # Isolate the core base64 cryptographic data string block
+            core_base64 = raw_key.split(header)[1].split(footer)[0]
+            # Strip out EVERY piece of whitespace, tabs, and layout indentation spaces completely
+            clean_base64 = "".join(core_base64.split())
+            # Reconstruct an immaculate, uncorrupted PEM block structure
+            creds_dict["private_key"] = f"{header}\n{clean_base64}\n{footer}\n"
             
         scopes = [
             "https://www.googleapis.com/auth/spreadsheets",
@@ -32,7 +42,7 @@ def get_gspread_client():
         creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
         return gspread.authorize(creds)
     except Exception as e:
-        st.error(f"❌ Failed to parse Google credentials payload: {e}")
+        st.error(f"❌ Defensive Engine stopped an authorization failure: {e}")
         st.stop()
 
 # Initialize the authenticated connection
