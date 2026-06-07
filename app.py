@@ -34,34 +34,52 @@ def get_gspread_client():
 
 # Initialize the authenticated connection
 client = get_gspread_client()
-
-# CRITICAL: Double check that this matches your newly converted Google Sheet ID from your browser address bar
-SPREADSHEET_ID = "1hcxENlBErHhNMMxuv_rdtqsSnXaRp5af2rhflrrwDBg"
+SPREADSHEET_ID = "15pLvkO6T7hlNy2Oe2W6tJ47j0TPZmaFJ"
 
 try:
     sheet = client.open_by_key(SPREADSHEET_ID)
     
-    # FIXED: Fetching by index position so sheet names don't matter!
-    # get_worksheet(1) targets your 2nd tab. get_worksheet(2) targets your 3rd tab.
+    # Track workbooks for the live visual debugger
+    all_worksheets = sheet.worksheets()
+    available_tab_names = [w.title for w in all_worksheets]
+    
+    # Map sheets by position (0-indexed: 1 is the 2nd tab, 2 is the 3rd tab)
     inventory_worksheet = sheet.get_worksheet(1)
     sales_worksheet = sheet.get_worksheet(2)
     
     if inventory_worksheet is None or sales_worksheet is None:
-        st.error("❌ Position Error: Your Google Sheet must have at least 3 tabs total.")
+        st.error(f"❌ Position Mapping Error: Your workbook only has {len(all_worksheets)} tab(s). It must have at least 3 tabs.")
         st.stop()
+
+    # BULLETPROOF DATA INGESTION: Read raw strings to bypass column header formatting crashes
+    raw_inv_data = inventory_worksheet.get_all_values()
+    if raw_inv_data:
+        df_inventory = pd.DataFrame(raw_inv_data[1:], columns=raw_inv_data[0])
+    else:
+        df_inventory = pd.DataFrame(columns=["Item Type", "Item Code", "Selling Price", "Remaining Quantity", "Total"])
         
-    # Safely pull live snapshots from sheets
-    records_inv = inventory_worksheet.get_all_records()
-    df_inventory = pd.DataFrame(records_inv) if records_inv else pd.DataFrame(columns=["Item Type", "Item Code", "Selling Price", "Remaining Quantity", "Total"])
-    
-    records_sales = sales_worksheet.get_all_records()
-    df_sales = pd.DataFrame(records_sales) if records_sales else pd.DataFrame(columns=["Order ID", "Item Code", "Item Type", "Original Price (₹)", "Discount (%)", "Final Revenue (₹)", "Timestamp"])
+    raw_sales_data = sales_worksheet.get_all_values()
+    if raw_sales_data:
+        df_sales = pd.DataFrame(raw_sales_data[1:], columns=raw_sales_data[0])
+    else:
+        df_sales = pd.DataFrame(columns=["Order ID", "Item Code", "Item Type", "Original Price (₹)", "Discount (%)", "Final Revenue (₹)", "Timestamp"])
+
 except Exception as e:
-    st.error(f"❌ Position Mapping Error: {e}")
-    st.markdown("💡 *Double check that your 2nd tab contains inventory headers and your 3rd tab is set up for logging orders.*")
+    st.error(f"❌ Structural Ingestion Failure: {e}")
+    
+    # LIVE DIAGNOSTIC DEBUGGER FOR MOBILE
+    st.markdown("### 🛠️ Live Workbook Schema Diagnostic Dump")
+    try:
+        st.info(f"Total Detected Tabs: `{len(all_worksheets)}`")
+        for idx, w_sheet in enumerate(all_worksheets):
+            first_row = w_sheet.get_all_values()
+            headers = first_row[0] if first_row else ["EMPTY SHEET"]
+            st.markdown(f"**Tab Position {idx + 1}:** `{w_sheet.title}` | **Detected Headers:** `{headers}`")
+    except Exception as diagnostic_err:
+        st.warning(f"Could not pull deep diagnostics: {diagnostic_err}")
     st.stop()
 
-# Strip accidental whitespaces from headers
+# Strip accidental whitespaces from headers to prevent KeyErrors
 df_inventory.columns = df_inventory.columns.str.strip()
 df_sales.columns = df_sales.columns.str.strip()
 
@@ -85,7 +103,8 @@ with p1:
     if df_inventory.empty:
         st.info("Your remote inventory repository appears to be empty.")
     else:
-        total_units = int(df_inventory["Remaining Quantity"].sum()) if "Remaining Quantity" in df_inventory.columns else 0
+        # Cast metrics cleanly to handle raw string conversions from sheets
+        total_units = int(pd.to_numeric(df_inventory["Remaining Quantity"], errors='coerce').sum()) if "Remaining Quantity" in df_inventory.columns else 0
         st.metric(label="Total Volumetric Units in Stock", value=f"{total_units} units")
         st.dataframe(
             df_inventory[available_cols], 
@@ -121,7 +140,8 @@ with p2:
                 insufficient_stock = []
                 for sku in chosen_skus:
                     row_idx = df_inventory[df_inventory["Item Code"] == sku].index[0]
-                    if int(df_inventory.at[row_idx, "Remaining Quantity"]) <= 0:
+                    stock_val = pd.to_numeric(df_inventory.at[row_idx, "Remaining Quantity"], errors='coerce')
+                    if pd.isna(stock_val) or int(stock_val) <= 0:
                         insufficient_stock.append(sku)
                 
                 if insufficient_stock:
@@ -135,10 +155,10 @@ with p2:
                     
                     for sku in chosen_skus:
                         row_idx = df_inventory[df_inventory["Item Code"] == sku].index[0]
-                        current_stock = int(df_inventory.at[row_idx, "Remaining Quantity"])
+                        current_stock = int(pd.to_numeric(df_inventory.at[row_idx, "Remaining Quantity"]))
                         
                         item_type_val = df_inventory.at[row_idx, "Item Type"]
-                        base_price_val = float(df_inventory.at[row_idx, "Selling Price"])
+                        base_price_val = float(pd.to_numeric(df_inventory.at[row_idx, "Selling Price"], errors='coerce'))
                         
                         final_selling_price = base_price_val * (1.0 - (actual_discount / 100.0))
                         total_bill_amount += final_selling_price
@@ -146,7 +166,7 @@ with p2:
                         
                         df_inventory.at[row_idx, "Remaining Quantity"] = current_stock - 1
                         if "Total" in df_inventory.columns:
-                            df_inventory.at[row_idx, "Total"] = df_inventory.at[row_idx, "Remaining Quantity"] * base_price_val
+                            df_inventory.at[row_idx, "Total"] = int(df_inventory.at[row_idx, "Remaining Quantity"]) * base_price_val
                         
                         new_sales_entries.append({
                             "Order ID": next_order_id, "Item Code": sku, "Item Type": item_type_val,
@@ -158,7 +178,7 @@ with p2:
                         df_sales = pd.concat([df_sales, pd.DataFrame(new_sales_entries)], ignore_index=True)
                     
                     try:
-                        # Update the sheets atomically based on their indices
+                        # Clear and rewrite rows safely as strings
                         inventory_worksheet.clear()
                         inventory_worksheet.update('A1', [df_inventory.columns.values.tolist()] + df_inventory.astype(str).values.tolist())
                         
