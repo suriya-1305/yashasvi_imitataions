@@ -1,27 +1,65 @@
+import json
 from datetime import datetime
 import pandas as pd
 import streamlit as st
-from streamlit_gsheets import GSheetsConnection
+import gspread
+from google.oauth2.service_account import Credentials
 
 # --- STREAMLIT UI SETUP ---
-st.set_page_config(page_title="Yashasvi Cloud Console", page_icon="💎", layout="wide")
-st.title("💎 Yashasvi Imitations — Cloud Terminal")
+st.set_page_config(page_title="Yashasvi Billing Management", page_icon="💎", layout="wide")
+st.title("💎 Yashasvi Imitations — Billing and Inventory Management")
 st.write("---")
 
-# --- ESTABLISH CLOUD GSHEETS CONNECTION ---
-# Connects using credentials stored securely in Streamlit Secrets
-conn = st.connection("gsheets", type=GSheetsConnection)
+# --- BULLETPROOF PROGRAMMATIC AUTHORIZATION ENGINE ---
+@st.cache_resource
+def get_gspread_client():
+    if "gspread_creds" not in st.secrets:
+        st.error("🔒 Cloud Database Configuration Missing! Please configure your raw JSON credentials inside your Secrets panel.")
+        st.stop()
+    
+    try:
+        # Ingest the string directly from secrets
+        creds_dict = json.loads(st.secrets["gspread_creds"])
+        
+        # Explicitly patch any escaped newline anomalies programmatically
+        if "private_key" in creds_dict:
+            creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+            
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"
+        ]
+        creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+        return gspread.authorize(creds)
+    except Exception as e:
+        st.error(f"❌ Failed to parse Google credentials payload: {e}")
+        st.stop()
+
+# Initialize the authenticated connection
+client = get_gspread_client()
+SPREADSHEET_ID = "15pLvkO6T7hlNy2Oe2W6tJ47j0TPZmaFJ"
 
 try:
-    df_inventory = conn.read(worksheet="Inventory", ttl=0)
-    df_sales = conn.read(worksheet="Sales Log", ttl=0)
-except Exception:
-    st.error("🔒 Cloud Database Sync Connection Pending. Please configure your Secrets arrays.")
+    sheet = client.open_by_key(SPREADSHEET_ID)
+    inventory_worksheet = sheet.worksheet("Inventory")
+    sales_worksheet = sheet.worksheet("Sales Log")
+    
+    # Safely pull live snapshots from sheets
+    records_inv = inventory_worksheet.get_all_records()
+    df_inventory = pd.DataFrame(records_inv) if records_inv else pd.DataFrame(columns=["Item Type", "Item Code", "Selling Price", "Remaining Quantity", "Total"])
+    
+    records_sales = sales_worksheet.get_all_records()
+    df_sales = pd.DataFrame(records_sales) if records_sales else pd.DataFrame(columns=["Order ID", "Item Code", "Item Type", "Original Price (₹)", "Discount (%)", "Final Revenue (₹)", "Timestamp"])
+except Exception as e:
+    st.error(f"❌ Error communicating with target tabs: {e}")
+    st.markdown("💡 *Ensure your Google Sheet tabs are named exactly: **`Inventory`** and **`Sales Log`***")
     st.stop()
 
-# Clean dataframes
+# Strip accidental whitespaces from headers
 df_inventory.columns = df_inventory.columns.str.strip()
 df_sales.columns = df_sales.columns.str.strip()
+
+# Normalize SKU key text styles
 df_inventory["Item Code"] = df_inventory["Item Code"].astype(str).str.strip().str.upper()
 
 # --- THE 4-PAGE DASHBOARD STRUCTURE ---
@@ -39,9 +77,9 @@ with p1:
     available_cols = [col for col in display_columns if col in df_inventory.columns]
     
     if df_inventory.empty:
-        st.info("Cloud repository catalog is currently empty.")
+        st.info("Your remote inventory repository appears to be empty.")
     else:
-        total_units = int(df_inventory["Remaining Quantity"].sum())
+        total_units = int(df_inventory["Remaining Quantity"].sum()) if "Remaining Quantity" in df_inventory.columns else 0
         st.metric(label="Total Volumetric Units in Stock", value=f"{total_units} units")
         st.dataframe(
             df_inventory[available_cols], 
@@ -68,11 +106,11 @@ with p2:
             placeholder="Type discount percentage (leave empty for 0%)"
         )
         
-        confirm_transaction = st.form_submit_button("Log Order & Commit to Cloud Sheet 🚀")
+        confirm_transaction = st.form_submit_button("Log Order & Update Google Sheets Cloud 🚀")
         
         if confirm_transaction:
             if not chosen_skus:
-                st.error("At least one item selection is required.")
+                st.error("At least one item code selection is required.")
             else:
                 insufficient_stock = []
                 for sku in chosen_skus:
@@ -100,7 +138,7 @@ with p2:
                         total_bill_amount += final_selling_price
                         next_order_id = len(df_sales) + len(new_sales_entries) + 1
                         
-                        # Update localized copy state
+                        # Apply local dataframe changes
                         df_inventory.at[row_idx, "Remaining Quantity"] = current_stock - 1
                         if "Total" in df_inventory.columns:
                             df_inventory.at[row_idx, "Total"] = df_inventory.at[row_idx, "Remaining Quantity"] * base_price_val
@@ -111,41 +149,51 @@ with p2:
                             "Final Revenue (₹)": final_selling_price, "Timestamp": timestamp_str
                         })
                     
-                    # Append rows and rewrite worksheets on Google Drive API
                     if new_sales_entries:
                         df_sales = pd.concat([df_sales, pd.DataFrame(new_sales_entries)], ignore_index=True)
                     
-                    # Push updates live to cloud sheet tracking frames
-                    conn.update(worksheet="Inventory", data=df_inventory)
-                    conn.update(worksheet="Sales Log", data=df_sales)
-                    
-                    st.success(f"Cloud Transaction Confirmed! Total Bill: ₹{total_bill_amount:,.2f}")
-                    st.rerun()
+                    # Push updates live to cloud tables using atomic matrix sync
+                    try:
+                        inventory_worksheet.clear()
+                        inventory_worksheet.update('A1', [df_inventory.columns.values.tolist()] + df_inventory.astype(str).values.tolist())
+                        
+                        sales_worksheet.clear()
+                        sales_worksheet.update('A1', [df_sales.columns.values.tolist()] + df_sales.astype(str).values.tolist())
+                        
+                        st.success(f"Cloud Sync Successful! Total Bill: ₹{total_bill_amount:,.2f}")
+                        st.rerun()
+                    except Exception as sheet_err:
+                        st.error(f"Cloud update failed: {sheet_err}")
 
 # --- PAGE 3: LIVE ORDER ANALYTICS ---
 with p3:
     st.subheader("Real-Time Sales Ingestion Log")
     if df_sales.empty:
-        st.info("Awaiting initial conversions.")
+        st.info("Awaiting initial stall conversions.")
     else:
+        revenue_sum = pd.to_numeric(df_sales['Final Revenue (₹)'], errors='coerce').sum()
         stat_col1, stat_col2 = st.columns(2)
-        stat_col1.metric("Total Items Sold Today", f"{len(df_sales)} Units")
-        stat_col2.metric("Gross Revenue Realized", f"₹{df_sales['Final Revenue (₹)'].sum():,.2f}")
+        stat_col1.metric("Total Items Sold", f"{len(df_sales)} Units")
+        stat_col2.metric("Gross Revenue Realized", f"₹{revenue_sum:,.2f}")
         st.dataframe(df_sales.sort_values(by="Order ID", ascending=False), use_container_width=True, hide_index=True)
 
 # --- PAGE 4: FINANCIAL HEALTH CHART ---
 with p4:
     st.subheader("Asset Value Metrics Summary")
     if df_inventory.empty:
-        st.info("No active catalogs found.")
+        st.info("Populate stock configurations to load the analytics charts.")
     else:
-        remaining_inventory_value = (df_inventory["Selling Price"] * df_inventory["Remaining Quantity"]).sum()
-        cash_earned_value = df_sales["Final Revenue (₹)"].sum() if not df_sales.empty else 0.0
+        sell_price = pd.to_numeric(df_inventory["Selling Price"], errors='coerce')
+        rem_qty = pd.to_numeric(df_inventory["Remaining Quantity"], errors='coerce')
+        remaining_inventory_value = (sell_price * rem_qty).sum()
+        
+        cash_earned_value = pd.to_numeric(df_sales["Final Revenue (₹)"], errors='coerce').sum() if not df_sales.empty else 0.0
         
         met1, met2 = st.columns(2)
         met1.metric("Unrealized Stock Book Value", f"₹{remaining_inventory_value:,.2f}")
         met2.metric("Liquid Cash Capitalized", f"₹{cash_earned_value:,.2f}")
         
+        st.markdown("#### Capital Distribution Ratio Visualization")
         chart_df = pd.DataFrame({
             "Financial Dimension": ["Remaining Stock Value", "Liquid Cash Earned"],
             "Amount (₹)": [remaining_inventory_value, cash_earned_value]
