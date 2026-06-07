@@ -1,3 +1,5 @@
+import base64
+import json
 from datetime import datetime
 import pandas as pd
 import streamlit as st
@@ -9,28 +11,17 @@ st.set_page_config(page_title="Yashasvi Cloud Console", page_icon="💎", layout
 st.title("💎 Yashasvi Imitations — Cloud Terminal")
 st.write("---")
 
-# --- DEFENSIVE ENGINE FOR KEY SANITIZATION ---
+# --- BULLETPROOF BASE64 DECRYPTION ENGINE ---
 @st.cache_resource
 def get_gspread_client():
-    if "gspread_creds" not in st.secrets:
-        st.error("🔒 Cloud Database Configuration Missing! Please check your Streamlit Secrets layout panel.")
+    if "encoded_creds" not in st.secrets:
+        st.error("🔒 Cloud Configuration Missing: Please add 'encoded_creds' to your Streamlit Secrets box.")
         st.stop()
     
     try:
-        # Pull credentials from the native secrets table
-        creds_dict = dict(st.secrets["gspread_creds"])
-        raw_key = str(creds_dict.get("private_key", ""))
-        
-        header = "-----BEGIN PRIVATE KEY-----"
-        footer = "-----END PRIVATE KEY-----"
-        
-        if header in raw_key and footer in raw_key:
-            # Isolate the core base64 string block
-            core_base64 = raw_key.split(header)[1].split(footer)[0]
-            # Strip out every single layout space, tab, newline, and text literal escape character
-            clean_base64 = "".join(core_base64.split()).replace("\\n", "")
-            # Reconstruct a perfectly clean PEM data block
-            creds_dict["private_key"] = f"{header}\n{clean_base64}\n{footer}\n"
+        # Decode the uncorrupted base64 payload straight back into raw JSON bytes
+        raw_json_bytes = base64.b64decode(st.secrets["encoded_creds"])
+        creds_dict = json.loads(raw_json_bytes)
             
         scopes = [
             "https://www.googleapis.com/auth/spreadsheets",
@@ -39,7 +30,7 @@ def get_gspread_client():
         creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
         return gspread.authorize(creds)
     except Exception as e:
-        st.error(f"❌ Key Sanitizer encountered an error: {e}")
+        st.error(f"❌ Base64 Decryption Engine failed: {e}")
         st.stop()
 
 # Initialize the authenticated connection
