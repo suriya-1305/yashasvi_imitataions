@@ -6,7 +6,7 @@ from google.oauth2.service_account import Credentials
 
 # --- STREAMLIT UI SETUP ---
 st.set_page_config(page_title="Yashasvi Cloud Console", page_icon="💎", layout="wide")
-st.title("💎 Yashasvi Imitations —  Billing and Inventory Management")
+st.title("💎 Yashasvi Imitations — Cloud Terminal")
 st.write("---")
 
 # --- DEFENSIVE ENGINE FOR KEY SANITIZATION ---
@@ -17,22 +17,19 @@ def get_gspread_client():
         st.stop()
     
     try:
-        # Streamlit automatically converts [gspread_creds] from TOML into a Python dictionary
+        # Pull credentials from the native secrets table
         creds_dict = dict(st.secrets["gspread_creds"])
-        
-        # Surgical extraction and cleanup of the raw key string
         raw_key = str(creds_dict.get("private_key", ""))
-        raw_key = raw_key.replace("\\n", "\n")
         
         header = "-----BEGIN PRIVATE KEY-----"
         footer = "-----END PRIVATE KEY-----"
         
         if header in raw_key and footer in raw_key:
-            # Isolate the core base64 cryptographic data string block
+            # Isolate the core base64 string block
             core_base64 = raw_key.split(header)[1].split(footer)[0]
-            # Strip out EVERY piece of whitespace, tabs, and layout indentation spaces completely
-            clean_base64 = "".join(core_base64.split())
-            # Reconstruct an immaculate, uncorrupted PEM block structure
+            # Strip out every single layout space, tab, newline, and text literal escape character
+            clean_base64 = "".join(core_base64.split()).replace("\\n", "")
+            # Reconstruct a perfectly clean PEM data block
             creds_dict["private_key"] = f"{header}\n{clean_base64}\n{footer}\n"
             
         scopes = [
@@ -42,7 +39,7 @@ def get_gspread_client():
         creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
         return gspread.authorize(creds)
     except Exception as e:
-        st.error(f"❌ Defensive Engine stopped an authorization failure: {e}")
+        st.error(f"❌ Key Sanitizer encountered an error: {e}")
         st.stop()
 
 # Initialize the authenticated connection
@@ -148,7 +145,6 @@ with p2:
                         total_bill_amount += final_selling_price
                         next_order_id = len(df_sales) + len(new_sales_entries) + 1
                         
-                        # Apply local dataframe changes
                         df_inventory.at[row_idx, "Remaining Quantity"] = current_stock - 1
                         if "Total" in df_inventory.columns:
                             df_inventory.at[row_idx, "Total"] = df_inventory.at[row_idx, "Remaining Quantity"] * base_price_val
@@ -162,7 +158,6 @@ with p2:
                     if new_sales_entries:
                         df_sales = pd.concat([df_sales, pd.DataFrame(new_sales_entries)], ignore_index=True)
                     
-                    # Push updates live to cloud tables using atomic matrix sync
                     try:
                         inventory_worksheet.clear()
                         inventory_worksheet.update('A1', [df_inventory.columns.values.tolist()] + df_inventory.astype(str).values.tolist())
