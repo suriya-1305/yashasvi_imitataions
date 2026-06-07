@@ -8,7 +8,7 @@ from google.oauth2.service_account import Credentials
 
 # --- STREAMLIT UI SETUP ---
 st.set_page_config(page_title="Yashasvi Cloud Console", page_icon="💎", layout="wide")
-st.title("💎 Yashasvi Imitations — Cloud Terminal")
+st.title("💎 Yashasvi Imitations — Inventory and Billing Management")
 st.write("---")
 
 # --- BULLETPROOF BASE64 DECRYPTION ENGINE ---
