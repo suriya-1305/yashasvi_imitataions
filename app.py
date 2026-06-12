@@ -56,8 +56,8 @@ try:
     expense_worksheet = sheet.get_worksheet(3)    # Tab 4: Expense Log
     bangles_log_worksheet = sheet.get_worksheet(4) # Tab 5: Bangles Detailed Log
 
-    # --- AUTOMATED REPAIR ENGINE: FIXED SCHEMA REALIGNMENT ---
-    correct_bangle_headers = ["Transaction Type", "Business Type", "Bangle Name", "Colour", "Size", "Cost Price (₹)", "Selling Price (₹)", "Channel", "Shipping Cost (₹)", "Timestamp"]
+    # --- FIXED SCHEMA REALIGNMENT (INCLUDES LOG ID BREAKS) ---
+    correct_bangle_headers = ["Log ID", "Transaction Type", "Business Type", "Bangle Name", "Colour", "Size", "Cost Price (₹)", "Selling Price (₹)", "Channel", "Shipping Cost (₹)", "Timestamp"]
     bangles_log_worksheet.update('A1', [correct_bangle_headers])
 
     # --- GENERAL INVENTORY ---
@@ -186,7 +186,6 @@ if not df_b_detailed_clean.empty and "Bangle Name" in df_b_detailed_clean.column
     df_b_detailed_clean["Size"] = df_b_detailed_clean["Size"].astype(str).str.strip() if "Size" in df_b_detailed_clean.columns else "2.6"
     
     computed_bangle_inventory_list = []
-    # Dynamic grouping safety fallback check
     g_cols = [c for c in ["Bangle Name", "Colour", "Size"] if c in df_b_detailed_clean.columns]
     if len(g_cols) == 3:
         grouped_bangles = df_b_detailed_clean.groupby(g_cols)
@@ -198,20 +197,22 @@ if not df_b_detailed_clean.empty and "Bangle Name" in df_b_detailed_clean.column
             avg_unit_cp = pd.to_numeric(group["Cost Price (₹)"], errors='coerce').dropna().mean() if "Cost Price (₹)" in group.columns else 0.0
             if pd.isna(avg_unit_cp): avg_unit_cp = 0.0
             
+            # FIXED: Added explicitly named "Quantity" and "Inventory Worth" metrics to table map
             computed_bangle_inventory_list.append({
                 "Model (Bangle Name)": b_name, "Colour Variant": b_col, "Size": b_sz,
-                "Unit Cost Price (₹)": avg_unit_cp,
-                "Total Purchased": purchased_lot_volume, "Total Sold": sold_lot_volume, "Available Stock Volume": available_lot_volume
+                "Unit CP (₹)": avg_unit_cp,
+                "Quantity Available": available_lot_volume, 
+                "Total Inventory Worth (₹)": available_lot_volume * avg_unit_cp
             })
         df_computed_bangles_master = pd.DataFrame(computed_bangle_inventory_list)
     else:
-        df_computed_bangles_master = pd.DataFrame(columns=["Model (Bangle Name)", "Colour Variant", "Size", "Unit Cost Price (₹)", "Total Purchased", "Total Sold", "Available Stock Volume"])
+        df_computed_bangles_master = pd.DataFrame(columns=["Model (Bangle Name)", "Colour Variant", "Size", "Unit CP (₹)", "Quantity Available", "Total Inventory Worth (₹)"])
 else:
-    df_computed_bangles_master = pd.DataFrame(columns=["Model (Bangle Name)", "Colour Variant", "Size", "Unit Cost Price (₹)", "Total Purchased", "Total Sold", "Available Stock Volume"])
+    df_computed_bangles_master = pd.DataFrame(columns=["Model (Bangle Name)", "Colour Variant", "Size", "Unit CP (₹)", "Quantity Available", "Total Inventory Worth (₹)"])
 
 # Calculate Inventory Stock Worth Metrics
-global_bangle_units_available = int(df_computed_bangles_master["Available Stock Volume"].sum()) if not df_computed_bangles_master.empty else 0
-bangle_inventory_cost_worth = float((df_computed_bangles_master["Available Stock Volume"] * df_computed_bangles_master["Unit Cost Price (₹)"]).sum()) if not df_computed_bangles_master.empty else 0.0
+global_bangle_units_available = int(df_computed_bangles_master["Quantity Available"].sum()) if not df_computed_bangles_master.empty else 0
+bangle_inventory_cost_worth = float(df_computed_bangles_master["Total Inventory Worth (₹)"].sum()) if not df_computed_bangles_master.empty else 0.0
 
 jew_stock_units = int(pd.to_numeric(df_inventory[remaining_qty_col], errors='coerce').fillna(0).sum()) if (not df_inventory.empty and remaining_qty_col in df_inventory.columns) else 0
 
@@ -362,7 +363,7 @@ with p2:
                         (df_computed_bangles_master["Size"] == query_size)
                     ] if not df_computed_bangles_master.empty else pd.DataFrame()
                     if not match_df.empty:
-                        available_stock_count = match_df.iloc[0]["Available Stock Volume"]
+                        available_stock_count = match_df.iloc[0]["Quantity Available"]
                         if available_stock_count > 0:
                             st.success(f"📦 Stock Verified! **`{available_stock_count} unit lots`** available.")
                         else:
@@ -373,9 +374,9 @@ with p2:
     with q_col2:
         st.markdown("#### 🎨 Color & Model Distribution Matrix View")
         if not df_computed_bangles_master.empty:
-            df_active_matrix_view = df_computed_bangles_master[df_computed_bangles_master["Available Stock Volume"] > 0]
+            df_active_matrix_view = df_computed_bangles_master[df_computed_bangles_master["Quantity Available"] > 0]
             if not df_active_matrix_view.empty:
-                df_pivot_matrix = df_active_matrix_view.pivot_table(index="Model (Bangle Name)", columns="Colour Variant", values="Available Stock Volume", aggfunc="sum", fill_value=0)
+                df_pivot_matrix = df_active_matrix_view.pivot_table(index="Model (Bangle Name)", columns="Colour Variant", values="Quantity Available", aggfunc="sum", fill_value=0)
                 st.dataframe(df_pivot_matrix, width="stretch")
             else:
                 st.info("No active available stock lines found.")
@@ -384,12 +385,15 @@ with p2:
     st.dataframe(df_computed_bangles_master, width="stretch", hide_index=True)
 
 # ==============================================================================
-# --- PAGE 3: FAST CHECKOUT TERMINAL (SMART BROADCASTING IMPLEMENTATION) ---
+# --- PAGE 3: FAST CHECKOUT TERMINAL ---
 # ==============================================================================
 with p3:
     st.subheader("🎯 Active Product Shopping Carts (Order-Level Financial Controls)")
     term_c1, term_c2 = st.columns(2)
     
+    # --------------------------------------------------------------------------
+    # LEFT COLUMN: OMNICHANNEL BANGLES SHOPPING CART WORKSPACE
+    # --------------------------------------------------------------------------
     with term_c1:
         st.markdown("### ⭕ 1. Bangles Comma-Separated Desk")
         bangle_form_mode = st.radio("Select Action Category", options=["Purchase (Stock In)", "Add to Sales Cart (Stock Out)"], horizontal=True)
@@ -453,10 +457,12 @@ with p3:
             if st.button("Commit Staged Purchases to Sheet 🚀", key="commit_b_p"):
                 c_rows = []
                 ts_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                c_idx = len(df_bangles_detailed)
                 for entry in st.session_state.staged_bangle_purchases:
                     for _ in range(entry["Quantity"]):
-                        # FIXED STRUCTURE APPENDIX ROW FORMAT
-                        c_rows.append(["Purchase", "Bangles", entry["Bangle Name"], entry["Colour"], entry["Size"], entry["CP"], 0.0, "N/A", 0.0, ts_str])
+                        c_idx += 1
+                        # FIXED: Perfectly maps Log ID into index slot 1, Business Type into slot 3
+                        c_rows.append([c_idx, "Purchase", "Bangles", entry["Bangle Name"], entry["Colour"], entry["Size"], entry["CP"], 0.0, "N/A", 0.0, ts_str])
                 bangles_log_worksheet.append_rows(c_rows)
                 st.session_state.staged_bangle_purchases = []
                 st.success("Purchases saved successfully with forced column mapping alignment!")
@@ -492,11 +498,13 @@ with p3:
                 shipping_distributed_per_item = b_order_shipping / total_items if total_items > 0 else 0
                 ts_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 c_rows = []
+                c_idx = len(df_bangles_detailed)
                 
                 for item in flattened_cart_items:
+                    c_idx += 1
                     final_discounted_revenue = item["Base SP"] * (1.0 - (b_order_discount / 100.0))
-                    # FIXED STRUCTURE APPENDIX ROW FORMAT
-                    c_rows.append(["Sale", "Bangles", item["Bangle Name"], item["Colour"], item["Size"], item["CP"], final_discounted_revenue, b_order_channel, shipping_distributed_per_item, ts_str])
+                    # FIXED: Perfectly maps Log ID into index slot 1, Business Type into slot 3
+                    c_rows.append([c_idx, "Sale", "Bangles", item["Bangle Name"], item["Colour"], item["Size"], item["CP"], final_discounted_revenue, b_order_channel, shipping_distributed_per_item, ts_str])
                 try:
                     bangles_log_worksheet.append_rows(c_rows)
                     st.session_state.bangle_sales_cart = []
@@ -687,4 +695,3 @@ with p5:
     if "Tab 2" in m_tabs: st.dataframe(df_inventory, width="stretch", hide_index=True)
     elif "Tab 3" in m_tabs: st.dataframe(df_sales, width="stretch", hide_index=True)
     else: st.dataframe(df_bangles_detailed, width="stretch", hide_index=True)
-        
