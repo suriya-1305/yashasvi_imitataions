@@ -56,8 +56,8 @@ try:
     expense_worksheet = sheet.get_worksheet(3)    # Tab 4: Expense Log
     bangles_log_worksheet = sheet.get_worksheet(4) # Tab 5: Bangles Detailed Log
 
-    # --- AUTOMATED LAYOUT STRUCTURAL REPAIR ENGINE ---
-    correct_bangle_headers = ["Transaction Type", "Bangle Name", "Colour", "Size", "Cost Price (₹)", "Selling Price (₹)", "Channel", "Shipping Cost (₹)", "Timestamp"]
+    # --- AUTOMATED REPAIR ENGINE: FIXED SCHEMA REALIGNMENT ---
+    correct_bangle_headers = ["Transaction Type", "Business Type", "Bangle Name", "Colour", "Size", "Cost Price (₹)", "Selling Price (₹)", "Channel", "Shipping Cost (₹)", "Timestamp"]
     bangles_log_worksheet.update('A1', [correct_bangle_headers])
 
     # --- GENERAL INVENTORY ---
@@ -180,31 +180,36 @@ if not df_bangles_detailed.empty: df_bangles_detailed = df_bangles_detailed[df_b
 
 # --- PRE-COMPUTE GRANULAR BANGLES INVENTORY & WORTH ---
 df_b_detailed_clean = df_bangles_detailed.copy()
-if not df_b_detailed_clean.empty:
+if not df_b_detailed_clean.empty and "Bangle Name" in df_b_detailed_clean.columns:
     df_b_detailed_clean["Bangle Name"] = df_b_detailed_clean["Bangle Name"].astype(str).str.strip().str.upper()
-    df_b_detailed_clean["Colour"] = df_b_detailed_clean["Colour"].astype(str).str.strip().str.upper()
-    df_b_detailed_clean["Size"] = df_b_detailed_clean["Size"].astype(str).str.strip()
+    df_b_detailed_clean["Colour"] = df_b_detailed_clean["Colour"].astype(str).str.strip().str.upper() if "Colour" in df_b_detailed_clean.columns else "DEFAULT"
+    df_b_detailed_clean["Size"] = df_b_detailed_clean["Size"].astype(str).str.strip() if "Size" in df_b_detailed_clean.columns else "2.6"
     
     computed_bangle_inventory_list = []
-    grouped_bangles = df_b_detailed_clean.groupby(["Bangle Name", "Colour", "Size"])
-    for (b_name, b_col, b_sz), group in grouped_bangles:
-        purchased_lot_volume = len(group[group["Transaction Type"] == "Purchase"])
-        sold_lot_volume = len(group[group["Transaction Type"] == "Sale"])
-        available_lot_volume = purchased_lot_volume - sold_lot_volume
-        
-        avg_unit_cp = pd.to_numeric(group["Cost Price (₹)"], errors='coerce').dropna().mean()
-        if pd.isna(avg_unit_cp): avg_unit_cp = 0.0
-        
-        computed_bangle_inventory_list.append({
-            "Model (Bangle Name)": b_name, "Colour Variant": b_col, "Size": b_sz,
-            "Unit Cost Price (₹)": avg_unit_cp,
-            "Total Purchased": purchased_lot_volume, "Total Sold": sold_lot_volume, "Available Stock Volume": available_lot_volume
-        })
-    df_computed_bangles_master = pd.DataFrame(computed_bangle_inventory_list)
+    # Dynamic grouping safety fallback check
+    g_cols = [c for c in ["Bangle Name", "Colour", "Size"] if c in df_b_detailed_clean.columns]
+    if len(g_cols) == 3:
+        grouped_bangles = df_b_detailed_clean.groupby(g_cols)
+        for (b_name, b_col, b_sz), group in grouped_bangles:
+            purchased_lot_volume = len(group[group["Transaction Type"] == "Purchase"])
+            sold_lot_volume = len(group[group["Transaction Type"] == "Sale"])
+            available_lot_volume = purchased_lot_volume - sold_lot_volume
+            
+            avg_unit_cp = pd.to_numeric(group["Cost Price (₹)"], errors='coerce').dropna().mean() if "Cost Price (₹)" in group.columns else 0.0
+            if pd.isna(avg_unit_cp): avg_unit_cp = 0.0
+            
+            computed_bangle_inventory_list.append({
+                "Model (Bangle Name)": b_name, "Colour Variant": b_col, "Size": b_sz,
+                "Unit Cost Price (₹)": avg_unit_cp,
+                "Total Purchased": purchased_lot_volume, "Total Sold": sold_lot_volume, "Available Stock Volume": available_lot_volume
+            })
+        df_computed_bangles_master = pd.DataFrame(computed_bangle_inventory_list)
+    else:
+        df_computed_bangles_master = pd.DataFrame(columns=["Model (Bangle Name)", "Colour Variant", "Size", "Unit Cost Price (₹)", "Total Purchased", "Total Sold", "Available Stock Volume"])
 else:
     df_computed_bangles_master = pd.DataFrame(columns=["Model (Bangle Name)", "Colour Variant", "Size", "Unit Cost Price (₹)", "Total Purchased", "Total Sold", "Available Stock Volume"])
 
-# FIXED: Added robust fallback validation criteria to resolve dynamic metric exceptions
+# Calculate Inventory Stock Worth Metrics
 global_bangle_units_available = int(df_computed_bangles_master["Available Stock Volume"].sum()) if not df_computed_bangles_master.empty else 0
 bangle_inventory_cost_worth = float((df_computed_bangles_master["Available Stock Volume"] * df_computed_bangles_master["Unit Cost Price (₹)"]).sum()) if not df_computed_bangles_master.empty else 0.0
 
@@ -238,15 +243,15 @@ with p1:
     gen_sales_revenue = pd.to_numeric(df_sales[sales_rev_col], errors='coerce').sum() if sales_rev_col in df_sales.columns else 0.0
     gen_sales_cogs = pd.to_numeric(df_sales[sales_cost_col], errors='coerce').sum() if sales_cost_col in df_sales.columns else 0.0
     
-    df_b_sales = df_bangles_detailed[df_bangles_detailed["Transaction Type"] == "Sale"]
-    bangle_sales_revenue = pd.to_numeric(df_b_sales["Selling Price (₹)"], errors='coerce').sum()
-    bangle_sales_cogs = pd.to_numeric(df_b_sales["Cost Price (₹)"], errors='coerce').sum()
+    df_b_sales = df_bangles_detailed[df_bangles_detailed["Transaction Type"] == "Sale"] if not df_bangles_detailed.empty else pd.DataFrame()
+    bangle_sales_revenue = pd.to_numeric(df_b_sales["Selling Price (₹)"], errors='coerce').sum() if not df_b_sales.empty else 0.0
+    bangle_sales_cogs = pd.to_numeric(df_b_sales["Cost Price (₹)"], errors='coerce').sum() if not df_b_sales.empty else 0.0
     
     bangle_mask = df_expenses["Business Segment"].astype(str).str.lower().str.contains("bangle")
     jewelry_mask = df_expenses["Business Segment"].astype(str).str.lower().str.contains("jewel")
     
     bangle_logged_expenses = pd.to_numeric(df_expenses[bangle_mask]["Amount (₹)"], errors='coerce').sum()
-    bangle_shipping_expenses = pd.to_numeric(df_b_sales["Shipping Cost (₹)"], errors='coerce').sum()
+    bangle_shipping_expenses = pd.to_numeric(df_b_sales["Shipping Cost (₹)"], errors='coerce').sum() if not df_b_sales.empty else 0.0
     bangle_total_outflow = bangle_logged_expenses + bangle_shipping_expenses
     
     jewelry_logged_expenses = pd.to_numeric(df_expenses[jewelry_mask]["Amount (₹)"], errors='coerce').sum()
@@ -268,12 +273,12 @@ with p1:
     with col_chan1:
         st.markdown("### ⭕ Bangles Catalog Performance (Omnichannel)")
         ub1, ub2 = st.columns(2)
-        ub1.metric("Bangles Units Sold", f"{len(df_b_sales)} Pcs")
+        ub1.metric("Bangles Units Sold", f"{len(df_b_sales) if not df_b_sales.empty else 0} Pcs")
         ub2.metric("Bangles Remaining Stock", f"{global_bangle_units_available} Pcs")
         
         st.metric("Bangles Total Receipts", f"₹{bangle_sales_revenue:,.2f}")
-        b_online_count = len(df_b_sales[df_b_sales["Channel"].astype(str).str.lower().str.contains("online")])
-        b_offline_count = len(df_b_sales[df_b_sales["Channel"].astype(str).str.lower().str.contains("offline")])
+        b_online_count = len(df_b_sales[df_b_sales["Channel"].astype(str).str.lower().str.contains("online")]) if not df_b_sales.empty else 0
+        b_offline_count = len(df_b_sales[df_b_sales["Channel"].astype(str).str.lower().str.contains("offline")]) if not df_b_sales.empty else 0
         st.caption(f"📦 Channel logs: **{b_online_count} Online** | **{b_offline_count} Offline Stall**")
         st.markdown(f"🔹 **Sunk Product COGS Value:** `₹{bangle_sales_cogs:,.2f}`")
         st.markdown(f"🔹 **Auto-Grouped Operations Cost:** `₹{bangle_logged_expenses:,.2f}`")
@@ -282,7 +287,7 @@ with p1:
         
         b_fixed = pd.to_numeric(df_expenses[bangle_mask & (df_expenses["Category"] == "Fixed Operating Overhead")]["Amount (₹)"], errors='coerce').sum()
         b_var = pd.to_numeric(df_expenses[bangle_mask & (df_expenses["Category"] == "Variable Logistics & Fulfillment")]["Amount (₹)"], errors='coerce').sum() + bangle_shipping_expenses
-        bangle_units_total = len(df_b_sales)
+        bangle_units_total = len(df_b_sales) if not df_b_sales.empty else 0
         
         if bangle_units_total > 0:
             avg_b_sp = bangle_sales_revenue / bangle_units_total
@@ -355,7 +360,7 @@ with p2:
                         (df_computed_bangles_master["Model (Bangle Name)"] == query_name) &
                         (df_computed_bangles_master["Colour Variant"] == query_color) &
                         (df_computed_bangles_master["Size"] == query_size)
-                    ]
+                    ] if not df_computed_bangles_master.empty else pd.DataFrame()
                     if not match_df.empty:
                         available_stock_count = match_df.iloc[0]["Available Stock Volume"]
                         if available_stock_count > 0:
@@ -385,9 +390,6 @@ with p3:
     st.subheader("🎯 Active Product Shopping Carts (Order-Level Financial Controls)")
     term_c1, term_c2 = st.columns(2)
     
-    # --------------------------------------------------------------------------
-    # LEFT COLUMN: OMNICHANNEL BANGLES SHOPPING CART WORKSPACE
-    # --------------------------------------------------------------------------
     with term_c1:
         st.markdown("### ⭕ 1. Bangles Comma-Separated Desk")
         bangle_form_mode = st.radio("Select Action Category", options=["Purchase (Stock In)", "Add to Sales Cart (Stock Out)"], horizontal=True)
@@ -420,7 +422,7 @@ with p3:
                         cp_parsed = cp_parts * N if len(cp_parts) == 1 else cp_parts
                             
                         if not (len(colors_parsed) == len(sizes_parsed) == len(qtys_parsed) == len(cp_parsed)):
-                            st.error("❌ Length Mismatch! Check list input alignment counts.")
+                            st.error("❌ Length Mismatch! Check list fields entry count alignment bounds.")
                         else:
                             if "Purchase" in bangle_form_mode:
                                 for c, s, q, cp in zip(colors_parsed, sizes_parsed, qtys_parsed, cp_parsed):
@@ -453,10 +455,11 @@ with p3:
                 ts_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 for entry in st.session_state.staged_bangle_purchases:
                     for _ in range(entry["Quantity"]):
-                        c_rows.append(["Purchase", entry["Bangle Name"], entry["Colour"], entry["Size"], entry["CP"], 0.0, "N/A", 0.0, ts_str])
+                        # FIXED STRUCTURE APPENDIX ROW FORMAT
+                        c_rows.append(["Purchase", "Bangles", entry["Bangle Name"], entry["Colour"], entry["Size"], entry["CP"], 0.0, "N/A", 0.0, ts_str])
                 bangles_log_worksheet.append_rows(c_rows)
                 st.session_state.staged_bangle_purchases = []
-                st.success("Purchases saved successfully!")
+                st.success("Purchases saved successfully with forced column mapping alignment!")
                 st.rerun()
 
         # Commit Bangle Sales Order
@@ -492,7 +495,8 @@ with p3:
                 
                 for item in flattened_cart_items:
                     final_discounted_revenue = item["Base SP"] * (1.0 - (b_order_discount / 100.0))
-                    c_rows.append(["Sale", item["Bangle Name"], item["Colour"], item["Size"], item["CP"], final_discounted_revenue, b_order_channel, shipping_distributed_per_item, ts_str])
+                    # FIXED STRUCTURE APPENDIX ROW FORMAT
+                    c_rows.append(["Sale", "Bangles", item["Bangle Name"], item["Colour"], item["Size"], item["CP"], final_discounted_revenue, b_order_channel, shipping_distributed_per_item, ts_str])
                 try:
                     bangles_log_worksheet.append_rows(c_rows)
                     st.session_state.bangle_sales_cart = []
@@ -590,7 +594,6 @@ with p3:
                 try:
                     inventory_worksheet.clear()
                     inventory_worksheet.update('A1', [df_inventory.columns.values.tolist()] + df_inventory.astype(str).values.tolist())
-                    # FIXED: Swapped typo next_id to next_exp_id to ensure unbreakable cloud writes
                     expense_worksheet.append_rows([[next_exp_id, "Direct Inventory Procurement", "Jewelry", total_procurement_investment_sum, combined_memo, ts_now]])
                     st.session_state.staged_jewelry_purchases = []
                     st.success(f"Stock In Completed! Procurement cost of ₹{total_procurement_investment_sum:,.2f} logged as an expense.")
@@ -684,3 +687,4 @@ with p5:
     if "Tab 2" in m_tabs: st.dataframe(df_inventory, width="stretch", hide_index=True)
     elif "Tab 3" in m_tabs: st.dataframe(df_sales, width="stretch", hide_index=True)
     else: st.dataframe(df_bangles_detailed, width="stretch", hide_index=True)
+        
