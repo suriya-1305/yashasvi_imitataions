@@ -1,6 +1,4 @@
-### Full Updated Code (`app.py`)
 
-```python
 import base64
 import json
 from datetime import datetime
