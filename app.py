@@ -122,8 +122,15 @@ else:
     st.error("❌ Inventory columns configuration is unreadable.")
     st.stop()
 
+# --- FIXED: DEFENSIVE SALES COLUMN INJECTION TO PREVENT KEYERRORS ---
 if not df_sales.empty and "Order ID" in df_sales.columns:
     df_sales = df_sales[df_sales["Order ID"].astype(str).str.strip() != ""]
+
+# If the sheet has historical data but lacks the Cost Price column, safely initialize it
+required_sales_cols = ["Order ID", "Item Code", "Item Type", "Original Price (₹)", "Discount (%)", "Final Revenue (₹)", "Cost Price (₹)", "Timestamp"]
+for r_col in required_sales_cols:
+    if r_col not in df_sales.columns:
+        df_sales[r_col] = 0.0 if "Price" in r_col or "Revenue" in r_col or "Discount" in r_col else ""
 
 if not df_expenses.empty and "Expense ID" in df_expenses.columns:
     df_expenses = df_expenses[df_expenses["Expense ID"].astype(str).str.strip() != ""]
@@ -141,14 +148,15 @@ p1, p2, p3, p4, p5, p6 = st.tabs([
 # --- PAGE 1: LIVE STOCK DASHBOARD ---
 with p1:
     st.subheader("Current Operational Stock Summary")
-    # Dynamically display Cost Price alongside Selling Price
     display_columns = [item_type_col, item_code_col, cost_price_col, selling_price_col, remaining_qty_col]
     available_cols = [col for col in display_columns if col in df_inventory.columns]
     
     total_units = int(pd.to_numeric(df_inventory[remaining_qty_col], errors='coerce').sum())
     st.metric(label="Total Volumetric Units in Stock", value=f"{total_units} units")
+    
+    # FIXED: Replaced use_container_width=True with width="stretch"
     st.dataframe(
-        df_inventory[available_cols], use_container_width=True, hide_index=True,
+        df_inventory[available_cols], width="stretch", hide_index=True,
         column_config={
             remaining_qty_col: st.column_config.NumberColumn("Quantity Available", width=140),
             item_code_col: st.column_config.TextColumn("Item Code", width=100),
@@ -197,12 +205,10 @@ with p2:
                         total_bill_amount += final_selling_price
                         next_order_id = len(df_sales) + len(new_sales_entries) + 1
                         
-                        # Apply live stock mutations strictly to Remaining Quantity
                         df_inventory.at[row_idx, remaining_qty_col] = str(current_stock - 1)
                         if total_col in df_inventory.columns:
                             df_inventory.at[row_idx, total_col] = str(int(df_inventory.at[row_idx, remaining_qty_col]) * base_price_val)
                         
-                        # Pass Cost Price directly into the sale log schema block
                         new_sales_entries.append({
                             "Order ID": next_order_id, "Item Code": sku, "Item Type": item_type_val,
                             "Original Price (₹)": base_price_val, "Discount (%)": actual_discount,
@@ -210,7 +216,6 @@ with p2:
                         })
                     
                     if new_sales_entries:
-                        # Append columns matching previous layout schema definitions
                         df_new_sales = pd.DataFrame(new_sales_entries)
                         for col in df_sales.columns:
                             if col not in df_new_sales.columns:
@@ -273,8 +278,9 @@ with p3:
     if df_expenses.empty:
         st.info("No corporate cash outflows registered yet.")
     else:
+        # FIXED: Replaced use_container_width=True with width="stretch"
         st.dataframe(
-            df_expenses.sort_values(by="Expense ID", ascending=False), use_container_width=True, hide_index=True,
+            df_expenses.sort_values(by="Expense ID", ascending=False), width="stretch", hide_index=True,
             column_config={
                 "Expense ID": st.column_config.TextColumn("ID", width=60),
                 "Category": st.column_config.TextColumn("Category", width=180),
@@ -302,8 +308,9 @@ with p4:
         c3.metric("Product Gross Margin", f"₹{bangle_margin:,.2f}")
         
         st.markdown("#### Lot B Sales Feed")
+        # FIXED: Replaced use_container_width=True with width="stretch"
         st.dataframe(
-            df_sales_bangles.sort_values(by="Order ID", ascending=False), use_container_width=True, hide_index=True,
+            df_sales_bangles.sort_values(by="Order ID", ascending=False), width="stretch", hide_index=True,
             column_config={
                 "Order ID": st.column_config.TextColumn("ID", width=60),
                 "Item Code": st.column_config.TextColumn("SKU Code", width=100),
@@ -332,8 +339,9 @@ with p5:
         cj3.metric("Product Gross Margin", f"₹{jew_margin:,.2f}")
         
         st.markdown("#### Lot A Sales Feed")
+        # FIXED: Replaced use_container_width=True with width="stretch"
         st.dataframe(
-            df_sales_jewelry.sort_values(by="Order ID", ascending=False), use_container_width=True, hide_index=True,
+            df_sales_jewelry.sort_values(by="Order ID", ascending=False), width="stretch", hide_index=True,
             column_config={
                 "Order ID": st.column_config.TextColumn("ID", width=60),
                 "Item Code": st.column_config.TextColumn("SKU Code", width=100),
@@ -348,12 +356,10 @@ with p5:
 with p6:
     st.subheader("Comprehensive Reconciled Financial Engine")
     
-    # Cast variables cleanly
     total_revenue_gross = pd.to_numeric(df_sales["Final Revenue (₹)"], errors='coerce').sum()
     total_cogs_products = pd.to_numeric(df_sales["Cost Price (₹)"], errors='coerce').sum()
     total_operational_expenses = pd.to_numeric(df_expenses["Amount (₹)"], errors='coerce').sum()
     
-    # Financial Matrix Reconcile
     gross_profit = total_revenue_gross - total_cogs_products
     net_profit_loss = gross_profit - total_operational_expenses
     
@@ -370,7 +376,6 @@ with p6:
     st.write("---")
     st.subheader("Free Shipping & Overhead Break-Even Analysis")
     
-    # Categorize Operational Expenses into Fixed Overhead vs Variable Shipping/Logistics
     fixed_cats = ["Stall Setup", "Electronics", "Lodging", "Operations", "Miscellaneous"]
     variable_cats = ["Free Shipping", "Packaging", "Direct Lot Material"]
     
@@ -381,46 +386,3 @@ with p6:
         cat_lower = str(row["Category"]).lower()
         amt_val = pd.to_numeric(row["Amount (₹)"], errors='coerce')
         if pd.isna(amt_val): continue
-        if any(f_c.lower() in cat_lower for f_c in fixed_cats):
-            fixed_costs += amt_val
-        else:
-            variable_costs += amt_val
-            
-    total_units_sold = len(df_sales)
-    col_bep1, col_bep2 = st.columns(2)
-    
-    with col_bep1:
-        st.markdown("#### Cost Allocation Structure")
-        st.markdown(f"🔹 **Fixed Operating Structural Investments:** `₹{fixed_costs:,.2f}` *(Stalls, Lodging, Devices)*")
-        st.markdown(f"🔹 **Logistics & Sunk Variable Outflows:** `₹{variable_costs:,.2f}` *(Free Shipping, Packaging)*")
-        
-        if total_units_sold > 0:
-            avg_sp_per_unit = total_revenue_gross / total_units_sold
-            avg_cp_per_unit = total_cogs_products / total_units_sold
-            avg_shipping_per_unit = variable_costs / total_units_sold
-            
-            # Unit Contribution Margin = SP - CP - Shipping Cost per unit
-            unit_contribution_margin = avg_sp_per_unit - avg_cp_per_unit - avg_shipping_per_unit
-            
-            st.markdown(f"🔹 **Average Retail Price (SP):** `₹{avg_sp_per_unit:,.2f}`")
-            st.markdown(f"🔹 **Average Product Base Cost (CP):** `₹{avg_cp_per_unit:,.2f}`")
-            st.markdown(f"🔹 **Average Shipping Burden per Pc:** `₹{avg_shipping_per_unit:,.2f}`")
-            st.markdown(f"🔹 **True Net Margin Contribution per Pc:** `₹{unit_contribution_margin:,.2f}`")
-        else:
-            unit_contribution_margin = 0.0
-            st.warning("Awaiting initial conversions to chart average lot contribution values.")
-            
-    with col_bep2:
-        st.markdown("#### Structural Breakeven Milestones")
-        if unit_contribution_margin > 0:
-            units_to_break_even = math.ceil(fixed_costs / unit_contribution_margin)
-            st.info(f"📈 **Break-Even Target Volume:** `{units_to_break_even} total units` must be sold to completely cover your fixed operating expenses at your current margins.")
-            
-            progress_ratio = min(1.0, total_units_sold / max(1, units_to_break_even))
-            st.progress(progress_ratio)
-            st.markdown(f"🎯 *Current Run Clearance Progress:* **{progress_ratio * 100:.1f}% completed** ({total_units_sold} / {units_to_break_even} units cleared).")
-        else:
-            if total_units_sold > 0:
-                st.error("🚨 Margin Deficit: Your product acquisition costs combined with free shipping overhead currently exceed your average unit sale receipts. Re-evaluate your base retail price lots.")
-            else:
-                st.info("Log your active product conversion units to calculate your exact breakeven volume progress bars.")
