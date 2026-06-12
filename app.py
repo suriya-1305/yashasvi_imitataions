@@ -302,9 +302,9 @@ with p2:
     with q_col1:
         st.markdown("#### 🔍 Interactive Query Lots Tool")
         with st.container(border=True):
-            query_name = st.text_input("Enter Model / Bangle Name", placeholder="e.g. KAVYA BANGLES").strip().upper()
-            query_color = st.text_input("Enter Colour Variant", placeholder="e.g. ROSE GOLD").strip().upper()
-            query_size = st.text_input("Enter Size Dimension", placeholder="e.g. 2.6").strip()
+            query_name = st.text_input("Enter Model / Bangle Name", placeholder="e.g. KAVYA BANGLES", key="q_b_n").strip().upper()
+            query_color = st.text_input("Enter Colour Variant", placeholder="e.g. ROSE GOLD", key="q_b_c").strip().upper()
+            query_size = st.text_input("Enter Size Dimension", placeholder="e.g. 2.6", key="q_b_s").strip()
             if st.button("Query Lot Availability Terminal ⚡", type="primary"):
                 if not query_name or not query_color or not query_size:
                     st.warning("All fields are required.")
@@ -337,7 +337,7 @@ with p2:
     st.dataframe(df_computed_bangles_master, width="stretch", hide_index=True)
 
 # ==============================================================================
-# --- PAGE 3: FAST CHECKOUT TERMINAL (ORDER CART IMPLEMENTATION) ---
+# --- PAGE 3: FAST CHECKOUT TERMINAL (PERSISTENT MODEL SELECTION VIA CARTS) ---
 # ==============================================================================
 with p3:
     st.subheader("🎯 Active Product Shopping Carts (Order-Level Financial Controls)")
@@ -350,8 +350,11 @@ with p3:
         st.markdown("### ⭕ 1. Bangles Order Cart Workspace")
         bangle_form_mode = st.radio("Select Action Category", options=["Purchase (Stock In)", "Add to Sales Cart (Stock Out)"], horizontal=True)
         
+        # FIXED: Model Name is pulled OUTSIDE the form so it stays filled across clicks!
+        f_b_name = st.text_input("Bangle Model Name", placeholder="e.g. KAVYA BANGLES").strip().upper()
+        
+        st.markdown("##### Add Variant Lines for this Model:")
         with st.form("bangle_cart_item_form", clear_on_submit=True):
-            f_b_name = st.text_input("Bangle Model Name", placeholder="e.g. KAVYA BANGLES").strip().upper()
             f_b_color = st.text_input("Colour Specification", placeholder="e.g. PINK").strip().upper()
             f_b_size = st.text_input("Size Dimension", placeholder="e.g. 2.4").strip()
             f_b_quantity = st.number_input("Item Quantity", min_value=1, step=1, value=1)
@@ -361,7 +364,7 @@ with p3:
             if "Sales Cart" in bangle_form_mode:
                 f_b_sp = st.number_input("Unit Base Selling Price (SP) (₹)", min_value=0.0, step=10.0, format="%.2f")
                 
-            if st.form_submit_button("Add Item Variant Line to Cart ➕"):
+            if st.form_submit_button("Add This Variant Line to Cart ➕"):
                 if not f_b_name or not f_b_color or not f_b_size:
                     st.error("Model Name, Colour, and Size are mandatory fields.")
                 else:
@@ -369,12 +372,12 @@ with p3:
                         st.session_state.staged_bangle_purchases.append({
                             "Bangle Name": f_b_name, "Colour": f_b_color, "Size": f_b_size, "Quantity": f_b_quantity, "CP": f_b_cp
                         })
-                        st.toast("Batch purchases staged!")
+                        st.toast(f"Staged variant: {f_b_color}!")
                     else:
                         st.session_state.bangle_sales_cart.append({
                             "Bangle Name": f_b_name, "Colour": f_b_color, "Size": f_b_size, "Quantity": f_b_quantity, "CP": f_b_cp, "Base SP": f_b_sp
                         })
-                        st.toast("Items loaded into active sales cart!")
+                        st.toast(f"Added variant to cart: {f_b_color}!")
 
         # Display and handle Bangle Purchases Commit
         if st.session_state.staged_bangle_purchases:
@@ -401,7 +404,6 @@ with p3:
             df_b_cart = pd.DataFrame(st.session_state.bangle_sales_cart)
             st.dataframe(df_b_cart, width="stretch", hide_index=True)
             
-            # ORDER LEVEL FINANCIAL CONTROLS FOR BANGLES
             st.markdown("🗣️ **Order-Level Financial Parameters Adjustment**")
             b_order_channel = st.radio("Order Destination Channel", options=["Offline Stall", "Online Order"], key="b_chan_rad", horizontal=True)
             b_order_discount = st.number_input("Order Discount Percentage (%)", min_value=0.0, max_value=100.0, step=1.0, value=0.0, key="b_disc_f")
@@ -416,14 +418,13 @@ with p3:
                 st.rerun()
                 
             if b_c2.button("Process Complete Bangles Order 🚀", type="primary", key="commit_b_s"):
-                # Explode rows to match the tracking schema format
                 flattened_cart_items = []
                 for item in st.session_state.bangle_sales_cart:
                     for _ in range(item["Quantity"]):
                         flattened_cart_items.append(item.copy())
                         
                 total_items = len(flattened_cart_items)
-                shipping_distributed_per_item = b_order_shipping / total_items
+                shipping_distributed_per_item = b_order_shipping / total_items if total_items > 0 else 0
                 ts_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 c_idx = len(df_bangles_detailed)
                 c_rows = []
@@ -438,7 +439,7 @@ with p3:
                 try:
                     bangles_log_worksheet.append_rows(c_rows)
                     st.session_state.bangle_sales_cart = []
-                    st.success("Bangles multi-product order logged successfully!")
+                    st.success("Bangles complete order logged successfully!")
                     st.rerun()
                 except Exception as err:
                     st.error(f"Sync failed: {err}")
@@ -473,8 +474,7 @@ with p3:
             df_j_cart = pd.DataFrame(st.session_state.jewelry_sales_cart)
             st.dataframe(df_j_cart[["SKU", "Category", "Quantity", "Base SP"]], width="stretch", hide_index=True)
             
-            # ORDER LEVEL FINANCIAL CONTROLS FOR JEWELRY
-            st.markdown("🗣------ **Order-Level Financial Parameters Adjustment**")
+            st.markdown("🗣️ **Order-Level Financial Parameters Adjustment**")
             j_order_discount = st.number_input("Order Discount Percentage (%)", min_value=0.0, max_value=100.0, step=1.0, value=0.0, key="j_disc_f")
             
             j_c1, j_c2 = st.columns(2)
@@ -485,9 +485,7 @@ with p3:
             if j_c2.button("Process Complete Jewelry Order 🚀", type="primary", key="commit_j_s"):
                 timestamp_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 next_order_id = len(df_sales) + 1
-                new_sales_entries_list = []
                 
-                # Perform inventory validation and preparation
                 stock_valid = True
                 for item in st.session_state.jewelry_sales_cart:
                     r_idx = item["Row Index"]
@@ -501,11 +499,8 @@ with p3:
                     for item in st.session_state.jewelry_sales_cart:
                         r_idx = item["Row Index"]
                         curr_stock = int(pd.to_numeric(df_inventory.at[r_idx, remaining_qty_col], errors='coerce'))
-                        
-                        # Apply live stock inventory depletion values locally
                         df_inventory.at[r_idx, remaining_qty_col] = str(curr_stock - item["Quantity"])
                         
-                        # Explode rows per unique quantity count to preserve structured matrix tracking schemas
                         for _ in range(item["Quantity"]):
                             final_discounted_item_revenue = item["Base SP"] * (1.0 - (j_order_discount / 100.0))
                             new_row_dict = {
