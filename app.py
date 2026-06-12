@@ -51,7 +51,7 @@ try:
     sales_worksheet = sheet.get_worksheet(2)      # Tab 3: Sales Log
     expense_worksheet = sheet.get_worksheet(3)    # Tab 4: Expense Log
     
-    # Safely find or initialize Tab 5 with "Colour" header injection
+    # Safely find or initialize Tab 5
     try:
         bangles_log_worksheet = sheet.get_worksheet(4)
         if bangles_log_worksheet is None:
@@ -108,16 +108,66 @@ except Exception as e:
     st.error(f"❌ Cloud Synchronization Unsuccessful: {e}")
     st.stop()
 
-# --- DEFENSIVE DATA NORMALIZATION ---
-# Inject business segment and colour columns if legacy schemas missing them
+# --- HELPER FUNCTION: DYNAMIC COLUMN NAME RESOLVER ---
+def resolve_column(df, keywords, default_name):
+    for col in df.columns:
+        if any(kw in col.lower() for kw in keywords):
+            return col
+    return default_name
+
+# --- INVENTORY COLUMNS RESOLUTIONS ---
+if not df_inventory.empty:
+    item_code_col = resolve_column(df_inventory, ["item code", "sku"], "Item Code")
+    item_type_col = resolve_column(df_inventory, ["item type", "category"], "Item Type")
+    selling_price_col = resolve_column(df_inventory, ["selling", "price", "sp"], "Selling Price")
+    cost_price_col = resolve_column(df_inventory, ["cost price", "buying", "cp", "cost"], "Cost Price")
+    total_col = resolve_column(df_inventory, ["total"], "Total")
+    
+    remaining_qty_col = None
+    for col in df_inventory.columns:
+        if "remaining" in col.lower():
+            remaining_qty_col = col
+            break
+    if not remaining_qty_col:
+        remaining_qty_col = resolve_column(df_inventory, ["qty", "quantity", "stock"], "Remaining Quantity")
+
+    df_inventory = df_inventory[df_inventory[item_code_col].astype(str).str.strip() != ""]
+    df_inventory[item_code_col] = df_inventory[item_code_col].astype(str).str.strip().str.upper()
+else:
+    st.error("❌ Inventory columns configuration is unreadable.")
+    st.stop()
+
+# --- SALES COLUMNS RESOLUTIONS (INSULATES AGAINST KEYERRORS) ---
+sales_id_col = resolve_column(df_sales, ["order id", "id"], "Order ID")
+sales_code_col = resolve_column(df_sales, ["item code", "sku", "code"], "Item Code")
+sales_type_col = resolve_column(df_sales, ["item type", "category", "model"], "Item Type")
+sales_orig_col = resolve_column(df_sales, ["original price", "price"], "Original Price (₹)")
+sales_discount_col = resolve_column(df_sales, ["discount"], "Discount (%)")
+sales_rev_col = resolve_column(df_sales, ["revenue", "final", "selling price", "sp", "amount"], "Final Revenue (₹)")
+sales_cost_col = resolve_column(df_sales, ["cost price", "buying price", "cp", "cost"], "Cost Price (₹)")
+sales_ts_col = resolve_column(df_sales, ["timestamp", "date", "time"], "Timestamp")
+
+# Safety Injection: If a required column is missing, create it to avoid runtime failures
+for col_var, col_name in [
+    (sales_id_col, "Order ID"), (sales_code_col, "Item Code"), (sales_type_col, "Item Type"),
+    (sales_orig_col, "Original Price (₹)"), (sales_discount_col, "Discount (%)"),
+    (sales_rev_col, "Final Revenue (₹)"), (sales_cost_col, "Cost Price (₹)"), (sales_ts_col, "Timestamp")
+]:
+    if col_name not in df_sales.columns:
+        df_sales[col_name] = 0.0 if "Price" in col_name or "Revenue" in col_name or "Cost" in col_name or "Discount" in col_name else ""
+
+if not df_sales.empty:
+    df_sales = df_sales[df_sales[sales_id_col].astype(str).str.strip() != ""]
+
+# --- EXPENSE AND LEGACY STRUCTURAL INJECTIONS ---
 if "Business Segment" not in df_expenses.columns:
     df_expenses["Business Segment"] = "Jewelry (Stall)"
 if "Colour" not in df_bangles_detailed.columns:
     df_bangles_detailed["Colour"] = "Default"
-
-# Standardize data formatting
-for df in [df_sales, df_expenses, df_bangles_detailed]:
-    df.columns = df.columns.str.strip()
+if not df_expenses.empty:
+    df_expenses = df_expenses[df_expenses["Expense ID"].astype(str).str.strip() != ""]
+if not df_bangles_detailed.empty:
+    df_bangles_detailed = df_bangles_detailed[df_bangles_detailed["Log ID"].astype(str).str.strip() != ""]
 
 # --- THE 5-PAGE RECONCILED HIGH-SPEED LAYOUT ---
 p1, p2, p3, p4, p5 = st.tabs([
@@ -135,8 +185,8 @@ with p1:
     st.subheader("📊 Reconciled Multi-Channel Financial Engine")
     
     # Ingest baseline financial values securely
-    gen_sales_revenue = pd.to_numeric(df_sales["Final Revenue (₹)"], errors='coerce').sum()
-    gen_sales_cogs = pd.to_numeric(df_sales["Cost Price (₹)"], errors='coerce').sum()
+    gen_sales_revenue = pd.to_numeric(df_sales[sales_rev_col], errors='coerce').sum()
+    gen_sales_cogs = pd.to_numeric(df_sales[sales_cost_col], errors='coerce').sum()
     
     df_b_sales = df_bangles_detailed[df_bangles_detailed["Transaction Type"] == "Sale"]
     df_b_purchases = df_bangles_detailed[df_bangles_detailed["Transaction Type"] == "Purchase"]
@@ -147,7 +197,6 @@ with p1:
     # Segmented operational expenses
     bangle_logged_expenses = pd.to_numeric(df_expenses[df_expenses["Business Segment"] == "Bangles (Online)"]["Amount (₹)"], errors='coerce').sum()
     bangle_shipping_expenses = pd.to_numeric(df_b_sales["Shipping Cost (₹)"], errors='coerce').sum()
-    total_bangle_expenses = bangle_logged_expenses + bangle_shipping_expenses + pd.to_numeric(df_b_purchases["Cost Price (₹)"], errors='coerce').sum()
     
     jewelry_logged_expenses = pd.to_numeric(df_expenses[df_expenses["Business Segment"] == "Jewelry (Stall)"]["Amount (₹)"], errors='coerce').sum()
     
@@ -290,7 +339,6 @@ with p2:
         if df_computed_bangles_master.empty:
             st.info("No distribution values recorded.")
         else:
-            # Render pivot representation for clear color vs model visibility mapping
             df_active_matrix_view = df_computed_bangles_master[df_computed_bangles_master["Available Stock Volume"] > 0]
             if not df_active_matrix_view.empty:
                 df_pivot_matrix = df_active_matrix_view.pivot_table(
@@ -302,7 +350,7 @@ with p2:
                 )
                 st.dataframe(df_pivot_matrix, width="stretch")
             else:
-                st.info("No active available stock lines available to map onto the distribution matrix visual charts.")
+                st.info("No active stock lines available to map onto the distribution matrix.")
 
     st.write("---")
     st.markdown("#### Complete Granular Inventory Lot Ingestion Breakdown")
@@ -313,7 +361,6 @@ with p2:
 # ==============================================================================
 with p3:
     st.subheader("🎯 Active Product Ingestion Counters & Staging Buffers")
-    
     term_c1, term_c2 = st.columns(2)
     
     with term_c1:
@@ -352,7 +399,7 @@ with p3:
                             "Transaction Type": "Sale", "Bangle Name": f_b_name, "Colour": f_b_color, "Size": f_b_size,
                             "Cost Price (₹)": f_b_cp, "Selling Price (₹)": f_b_sp, "Channel": f_b_channel, "Shipping Cost (₹)": f_b_ship
                         })
-                    st.toast("Row added to flash memory staging grid!")
+                    st.toast("Row added to staging grid!")
 
         # Process and render local buffers
         if st.session_state.staged_bangle_purchases:
@@ -390,14 +437,8 @@ with p3:
         if df_inventory.empty:
             st.info("General catalog dictionary payload empty.")
         else:
-            sku_label_key = "Item Code" if "Item Code" in df_inventory.columns else df_inventory.columns[0]
-            type_label_key = "Item Type" if "Item Type" in df_inventory.columns else df_inventory.columns[1]
-            sp_label_key = "Selling Price" if "Selling Price" in df_inventory.columns else df_inventory.columns[2]
-            cp_label_key = "Cost Price" if "Cost Price" in df_inventory.columns else df_inventory.columns[3]
-            rem_label_key = "Remaining Quantity" if "Remaining Quantity" in df_inventory.columns else df_inventory.columns[4]
-            
             with st.form("general_jewelry_checkout_form", clear_on_submit=True):
-                chosen_jew_skus = st.multiselect("Select Checkout SKU Target Codes", options=df_inventory[sku_label_key].dropna().tolist())
+                chosen_jew_skus = st.multiselect("Select Checkout SKU Target Codes", options=df_inventory[item_code_col].dropna().tolist())
                 jew_discount = st.number_input("Applied Disc %", min_value=0.0, max_value=100.0, value=None, step=5.0, placeholder="0%")
                 submit_jew_sale = st.form_submit_button("Log Jewelry Sale Transaction 🚀")
                 
@@ -406,28 +447,31 @@ with p3:
                         st.error("Select at least one SKU target code to execute a transaction.")
                     else:
                         timestamp_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        new_sales_entries = []
                         
                         for sku in chosen_jew_skus:
-                            r_idx = df_inventory[df_inventory[sku_label_key] == sku].index[0]
-                            curr_stock = int(pd.to_numeric(df_inventory.at[r_idx, rem_label_key], errors='coerce'))
+                            r_idx = df_inventory[df_inventory[item_code_col] == sku].index[0]
+                            curr_stock = int(pd.to_numeric(df_inventory.at[r_idx, remaining_qty_col], errors='coerce'))
                             
-                            df_inventory.at[r_idx, rem_label_key] = str(curr_stock - 1)
+                            df_inventory.at[r_idx, remaining_qty_col] = str(curr_stock - 1)
                             
-                            new_sales_entries.append([
-                                len(df_sales) + len(new_sales_entries) + 1,
-                                sku,
-                                df_inventory.at[r_idx, type_label_key],
-                                float(pd.to_numeric(df_inventory.at[r_idx, sp_label_key], errors='coerce')),
-                                jew_discount if jew_discount is not None else 0.0,
-                                float(pd.to_numeric(df_inventory.at[r_idx, sp_label_key], errors='coerce')) * (1.0 - ((jew_discount if jew_discount is not None else 0.0) / 100.0)),
-                                float(pd.to_numeric(df_inventory.at[r_idx, cp_label_key], errors='coerce')),
-                                timestamp_str
-                            ])
+                            # Re-write via dictionary assignment to eliminate position displacement bugs
+                            new_row_dict = {
+                                "Order ID": len(df_sales) + 1,
+                                "Item Code": sku,
+                                "Item Type": df_inventory.at[r_idx, item_type_col],
+                                "Original Price (₹)": float(pd.to_numeric(df_inventory.at[r_idx, selling_price_col], errors='coerce')),
+                                "Discount (%)": jew_discount if jew_discount is not None else 0.0,
+                                "Final Revenue (₹)": float(pd.to_numeric(df_inventory.at[r_idx, selling_price_col], errors='coerce')) * (1.0 - ((jew_discount if jew_discount is not None else 0.0) / 100.0)),
+                                "Cost Price (₹)": float(pd.to_numeric(df_inventory.at[r_idx, cost_price_col], errors='coerce')) if cost_price_col in df_inventory.columns else 0.0,
+                                "Timestamp": timestamp_str
+                            }
+                            df_sales = pd.concat([df_sales, pd.DataFrame([new_row_dict])], ignore_index=True)
+                            
                         try:
                             inventory_worksheet.clear()
                             inventory_worksheet.update('A1', [df_inventory.columns.values.tolist()] + df_inventory.astype(str).values.tolist())
-                            sales_worksheet.append_rows(new_sales_entries)
+                            sales_worksheet.clear()
+                            sales_worksheet.update('A1', [df_sales.columns.values.tolist()] + df_sales.astype(str).values.tolist())
                             st.success("Stall Jewelry transaction logged successfully!")
                             st.rerun()
                         except Exception as cloud_err:
@@ -438,7 +482,6 @@ with p3:
 # ==============================================================================
 with p4:
     st.subheader("💸 Segmented Operational Cost Allocation Board")
-    
     with st.form("stratified_expense_form", clear_on_submit=True):
         f_exp_segment = st.selectbox("Assign Outflow Target Business Segment", options=["Bangles (Online)", "Jewelry (Stall)"])
         f_exp_cat = st.selectbox("Category Allocation Mapping", options=[
@@ -453,7 +496,7 @@ with p4:
             "Miscellaneous Outflows"
         ])
         f_exp_amt = st.number_input("Transaction Outflow Value (₹)", min_value=0.0, step=50.0, format="%.2f")
-        f_exp_desc = st.text_input("Transaction Memo / Details", placeholder="e.g. Train ticket from BLR to HYD, Shipment - kavya, iPhone 17 pro rent")
+        f_exp_desc = st.text_input("Transaction Memo / Details", placeholder="e.g. Train ticket from BLR to HYD, Shipment - kavya")
         f_submit_exp = st.form_submit_button("Commit Segmented Expense Entry 💸")
         
         if f_submit_exp:
@@ -462,7 +505,6 @@ with p4:
             else:
                 next_id = len(df_expenses) + 1
                 ts_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                
                 expense_worksheet.append_rows([[next_id, f_exp_cat, f_exp_segment, f_exp_amt, f_exp_desc, ts_now]])
                 st.success(f"Outflow of ₹{f_exp_amt:,.2f} appended successfully to {f_exp_segment}!")
                 st.rerun()
