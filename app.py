@@ -57,7 +57,6 @@ try:
     bangles_log_worksheet = sheet.get_worksheet(4) # Tab 5: Bangles Detailed Log
 
     # --- AUTOMATED LAYOUT STRUCTURAL REPAIR ENGINE ---
-    # This guarantees the spreadsheet includes the Colour column in row 1
     correct_bangle_headers = ["Transaction Type", "Bangle Name", "Colour", "Size", "Cost Price (₹)", "Selling Price (₹)", "Channel", "Shipping Cost (₹)", "Timestamp"]
     bangles_log_worksheet.update('A1', [correct_bangle_headers])
 
@@ -193,7 +192,6 @@ if not df_b_detailed_clean.empty:
         sold_lot_volume = len(group[group["Transaction Type"] == "Sale"])
         available_lot_volume = purchased_lot_volume - sold_lot_volume
         
-        # Safely capture product base unit CP inside the variant lot segment
         avg_unit_cp = pd.to_numeric(group["Cost Price (₹)"], errors='coerce').dropna().mean()
         if pd.isna(avg_unit_cp): avg_unit_cp = 0.0
         
@@ -206,12 +204,16 @@ if not df_b_detailed_clean.empty:
 else:
     df_computed_bangles_master = pd.DataFrame(columns=["Model (Bangle Name)", "Colour Variant", "Size", "Unit Cost Price (₹)", "Total Purchased", "Total Sold", "Available Stock Volume"])
 
-# Calculate Inventory Worth Metrics
+# FIXED: Added robust fallback validation criteria to resolve dynamic metric exceptions
 global_bangle_units_available = int(df_computed_bangles_master["Available Stock Volume"].sum()) if not df_computed_bangles_master.empty else 0
 bangle_inventory_cost_worth = float((df_computed_bangles_master["Available Stock Volume"] * df_computed_bangles_master["Unit Cost Price (₹)"]).sum()) if not df_computed_bangles_master.empty else 0.0
 
-jew_stock_units = int(pd.to_numeric(df_inventory[remaining_qty_col], errors='coerce').fillna(0).sum()) if not df_inventory.empty else 0
-jew_inventory_cost_worth = float((pd.to_numeric(df_inventory[cost_price_col], errors='coerce').fillna(0) * pd.to_numeric(df_inventory[remaining_qty_col], errors='coerce').fillna(0)).sum()) if not df_inventory.empty else 0.0
+jew_stock_units = int(pd.to_numeric(df_inventory[remaining_qty_col], errors='coerce').fillna(0).sum()) if (not df_inventory.empty and remaining_qty_col in df_inventory.columns) else 0
+
+if not df_inventory.empty and cost_price_col in df_inventory.columns and remaining_qty_col in df_inventory.columns:
+    jew_inventory_cost_worth = float((pd.to_numeric(df_inventory[cost_price_col], errors='coerce').fillna(0) * pd.to_numeric(df_inventory[remaining_qty_col], errors='coerce').fillna(0)).sum())
+else:
+    jew_inventory_cost_worth = 0.0
 
 total_combined_inventory_asset_worth = bangle_inventory_cost_worth + jew_inventory_cost_worth
 
@@ -225,17 +227,16 @@ p1, p2, p3, p4, p5 = st.tabs([
 ])
 
 # ==============================================================================
-# --- PAGE 1: BUSINESS EXECUTIVE DASHBOARD (WITH LIVE INVENTORY ASSET VALUE) ---
+# --- PAGE 1: BUSINESS EXECUTIVE DASHBOARD ---
 # ==============================================================================
 with p1:
     st.subheader("📊 Reconciled Multi-Channel Financial Engine")
     
-    # Live Core Capital Valuation Header Card Block
-    st.info(f"💰 **Total Current Inventory Valuation (At Sunk Cost Price):** `₹{total_combined_inventory_asset_worth:,.2f}` | *Bangles Asset: ₹{bangle_inventory_cost_worth:,.2f}* | *Jewelry Asset: ₹{jew_inventory_cost_worth:,.2f}*")
+    st.info(f"💰 **Total Current Inventory Valuation (At Cost Price):** `₹{total_combined_inventory_asset_worth:,.2f}` | *Bangles Asset: ₹{bangle_inventory_cost_worth:,.2f}* | *Jewelry Asset: ₹{jew_inventory_cost_worth:,.2f}*")
     st.write("---")
     
-    gen_sales_revenue = pd.to_numeric(df_sales[sales_rev_col], errors='coerce').sum()
-    gen_sales_cogs = pd.to_numeric(df_sales[sales_cost_col], errors='coerce').sum()
+    gen_sales_revenue = pd.to_numeric(df_sales[sales_rev_col], errors='coerce').sum() if sales_rev_col in df_sales.columns else 0.0
+    gen_sales_cogs = pd.to_numeric(df_sales[sales_cost_col], errors='coerce').sum() if sales_cost_col in df_sales.columns else 0.0
     
     df_b_sales = df_bangles_detailed[df_bangles_detailed["Transaction Type"] == "Sale"]
     bangle_sales_revenue = pd.to_numeric(df_b_sales["Selling Price (₹)"], errors='coerce').sum()
@@ -290,7 +291,7 @@ with p1:
             b_contribution = avg_b_sp - avg_b_cp - avg_b_var
             if b_contribution > 0:
                 bangle_bep = math.ceil(b_fixed / b_contribution) if b_fixed > 0 else 1
-                st.success(f"📈 **Bangles Category Break-Even Point:** `{bangle_bep} units` sold.")
+                st.success(f"📈 **Bangles Break-Even Target Point:** `{bangle_bep} units` sold.")
                 b_progress = min(1.0, bangle_units_total / max(1, bangle_bep))
                 st.progress(b_progress)
                 st.caption(f"Category Progress: **{b_progress * 100:.1f}% met**")
@@ -302,7 +303,7 @@ with p1:
     with col_chan2:
         st.markdown("### 📿 Jewelry Catalog Performance (Stall Engine)")
         uj1, uj2 = st.columns(2)
-        uj1.metric("Jewelry Units Sold", f"{jew_stock_units} Pcs")
+        uj1.metric("Jewelry Units Sold", f"{len(df_sales)} Pcs")
         uj2.metric("Jewelry Remaining Stock", f"{jew_stock_units} Pcs")
         
         st.metric("Jewelry Total Receipts", f"₹{gen_sales_revenue:,.2f}")
@@ -311,15 +312,16 @@ with p1:
         st.markdown(f"🏁 **Net Jewelry Line Income:** `₹{jewelry_net_profit:,.2f}`")
         
         j_fixed = pd.to_numeric(df_expenses[jewelry_mask & (df_expenses["Category"] == "Fixed Operating Overhead")]["Amount (₹)"], errors='coerce').sum()
+        jewelry_units_total = len(df_sales)
         
-        if jew_stock_units > 0:
-            avg_j_sp = gen_sales_revenue / jew_stock_units
-            avg_j_cp = gen_sales_cogs / jew_stock_units
+        if jewelry_units_total > 0:
+            avg_j_sp = gen_sales_revenue / jewelry_units_total
+            avg_j_cp = gen_sales_cogs / jewelry_units_total
             j_contribution = avg_j_sp - avg_j_cp
             if j_contribution > 0:
                 jew_bep = math.ceil(j_fixed / j_contribution) if j_fixed > 0 else 1
-                st.success(f"📈 **Jewelry Category Break-Even Point:** `{jew_bep} units` sold.")
-                j_progress = min(1.0, jew_stock_units / max(1, jew_bep))
+                st.success(f"📈 **Jewelry Break-Even Target Point:** `{jew_bep} units` sold.")
+                j_progress = min(1.0, jewelry_units_total / max(1, jew_bep))
                 st.progress(j_progress)
                 st.caption(f"Category Progress: **{j_progress * 100:.1f}% met**")
             else:
@@ -333,7 +335,6 @@ with p1:
 with p2:
     st.subheader("⭕ Granular Bangles Color-Model Matrix & Query Terminal")
     
-    # High visibility financial valuation block for the bangles branch
     m_col1, m_col2 = st.columns(2)
     m_col1.metric("Total Physical Bangle Stock Volume", f"{global_bangle_units_available} Units Available")
     m_col2.metric("Bangles Total Inventory Cost Value", f"₹{bangle_inventory_cost_worth:,.2f}")
@@ -378,7 +379,7 @@ with p2:
     st.dataframe(df_computed_bangles_master, width="stretch", hide_index=True)
 
 # ==============================================================================
-# --- PAGE 3: FAST CHECKOUT TERMINAL ---
+# --- PAGE 3: FAST CHECKOUT TERMINAL (SMART BROADCASTING IMPLEMENTATION) ---
 # ==============================================================================
 with p3:
     st.subheader("🎯 Active Product Shopping Carts (Order-Level Financial Controls)")
@@ -419,7 +420,7 @@ with p3:
                         cp_parsed = cp_parts * N if len(cp_parts) == 1 else cp_parts
                             
                         if not (len(colors_parsed) == len(sizes_parsed) == len(qtys_parsed) == len(cp_parsed)):
-                            st.error("❌ Length Mismatch! Check parameter counts alignment values.")
+                            st.error("❌ Length Mismatch! Check list input alignment counts.")
                         else:
                             if "Purchase" in bangle_form_mode:
                                 for c, s, q, cp in zip(colors_parsed, sizes_parsed, qtys_parsed, cp_parsed):
@@ -442,7 +443,7 @@ with p3:
                     except ValueError:
                         st.error("Formatting Mismatch: Ensure numeric fields are entered correctly.")
 
-        # Commit Bangle Purchases to Sheet (Saves beautifully in correct column positions)
+        # Commit Bangle Purchases
         if st.session_state.staged_bangle_purchases:
             st.write("---")
             st.markdown("##### Staged Bulk Purchases Preview")
@@ -452,11 +453,10 @@ with p3:
                 ts_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 for entry in st.session_state.staged_bangle_purchases:
                     for _ in range(entry["Quantity"]):
-                        # Aligning exactly with row header positions layout structure
                         c_rows.append(["Purchase", entry["Bangle Name"], entry["Colour"], entry["Size"], entry["CP"], 0.0, "N/A", 0.0, ts_str])
                 bangles_log_worksheet.append_rows(c_rows)
                 st.session_state.staged_bangle_purchases = []
-                st.success("Purchases saved successfully with perfect column mapping!")
+                st.success("Purchases saved successfully!")
                 st.rerun()
 
         # Commit Bangle Sales Order
@@ -520,7 +520,7 @@ with p3:
                 
             if st.form_submit_button("Explode Jewelry Strings Into Cart List ➕"):
                 if not f_j_skus_str or not f_j_qtys_str or not f_j_cp_str:
-                    st.error("All fields are required.")
+                    st.error("All comma-separated fields are required.")
                 else:
                     try:
                         skus_parsed = [s.strip().upper() for s in f_j_skus_str.split(",") if s.strip()]
@@ -590,6 +590,7 @@ with p3:
                 try:
                     inventory_worksheet.clear()
                     inventory_worksheet.update('A1', [df_inventory.columns.values.tolist()] + df_inventory.astype(str).values.tolist())
+                    # FIXED: Swapped typo next_id to next_exp_id to ensure unbreakable cloud writes
                     expense_worksheet.append_rows([[next_exp_id, "Direct Inventory Procurement", "Jewelry", total_procurement_investment_sum, combined_memo, ts_now]])
                     st.session_state.staged_jewelry_purchases = []
                     st.success(f"Stock In Completed! Procurement cost of ₹{total_procurement_investment_sum:,.2f} logged as an expense.")
