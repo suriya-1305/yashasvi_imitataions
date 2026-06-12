@@ -402,4 +402,267 @@ with p3:
                             if "Purchase" in bangle_form_mode:
                                 for c, s, q, cp in zip(colors_parsed, sizes_parsed, qtys_parsed, cp_parsed):
                                     st.session_state.staged_bangle_purchases.append({
-                                        "Bangle Name": f_b_name, "Colour":
+                                        "Bangle Name": f_b_name, "Colour": c, "Size": s, "Quantity": q, "CP": cp
+                                    })
+                                st.toast("Bulk purchases staged!")
+                            else:
+                                sp_parts = [float(p.strip()) for p in f_b_sp_str.split(",") if p.strip()]
+                                if len(sp_parts) == 1: sp_parsed = sp_parts * len(colors_parsed)
+                                else: sp_parsed = sp_parts
+                                    
+                                if len(sp_parsed) != len(colors_parsed):
+                                    st.error("Selling Price list entry count alignment error.")
+                                else:
+                                    for c, s, q, cp, sp in zip(colors_parsed, sizes_parsed, qtys_parsed, cp_parsed, sp_parsed):
+                                        st.session_state.bangle_sales_cart.append({
+                                            "Bangle Name": f_b_name, "Colour": c, "Size": s, "Quantity": q, "CP": cp, "Base SP": sp
+                                        })
+                                    st.toast("Bulk variants added to sales cart!")
+                    except ValueError:
+                        st.error("Formatting Error: Check your integer values and numeric prices.")
+
+        if st.session_state.staged_bangle_purchases:
+            st.write("---")
+            st.markdown("##### Staged Bulk Purchases Preview")
+            st.dataframe(pd.DataFrame(st.session_state.staged_bangle_purchases), width="stretch", hide_index=True)
+            if st.button("Commit Staged Purchases to Sheet 🚀", key="commit_b_p"):
+                c_rows = []
+                c_idx = len(df_bangles_detailed)
+                ts_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                for entry in st.session_state.staged_bangle_purchases:
+                    for _ in range(entry["Quantity"]):
+                        c_idx += 1
+                        c_rows.append([c_idx, "Purchase", entry["Bangle Name"], entry["Colour"], entry["Size"], entry["CP"], 0.0, "N/A", 0.0, ts_str])
+                bangles_log_worksheet.append_rows(c_rows)
+                st.session_state.staged_bangle_purchases = []
+                st.success("Purchases saved successfully!")
+                st.rerun()
+
+        if st.session_state.bangle_sales_cart:
+            st.write("---")
+            st.markdown("##### 🛒 Active Bangles Sales Cart")
+            df_b_cart = pd.DataFrame(st.session_state.bangle_sales_cart)
+            st.dataframe(df_b_cart, width="stretch", hide_index=True)
+            
+            st.markdown("🗣️ **Order-Level Financial Parameters Adjustment**")
+            b_order_channel = st.radio("Order Destination Channel", options=["Offline Stall", "Online Order"], key="b_chan_rad", horizontal=True)
+            b_order_discount = st.number_input("Order Discount Percentage (%)", min_value=0.0, max_value=100.0, step=1.0, value=0.0, key="b_disc_f")
+            
+            b_order_shipping = 0.0
+            if b_order_channel == "Online Order":
+                b_order_shipping = st.number_input("Total Order Shipping Cost (₹)", min_value=0.0, step=10.0, value=0.0, key="b_ship_f")
+                
+            b_c1, b_c2 = st.columns(2)
+            if b_c1.button("Clear Bangles Sales Cart 🗑️", key="clear_b_s"):
+                st.session_state.bangle_sales_cart = []
+                st.rerun()
+                
+            if b_c2.button("Process Complete Bangles Order 🚀", type="primary", key="commit_b_s"):
+                flattened_cart_items = []
+                for item in st.session_state.bangle_sales_cart:
+                    for _ in range(item["Quantity"]):
+                        flattened_cart_items.append(item.copy())
+                        
+                total_items = len(flattened_cart_items)
+                shipping_distributed_per_item = b_order_shipping / total_items if total_items > 0 else 0
+                ts_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                c_idx = len(df_bangles_detailed)
+                c_rows = []
+                
+                for item in flattened_cart_items:
+                    c_idx += 1
+                    final_discounted_revenue = item["Base SP"] * (1.0 - (b_order_discount / 100.0))
+                    c_rows.append([
+                        c_idx, "Sale", item["Bangle Name"], item["Colour"], item["Size"],
+                        item["CP"], final_discounted_revenue, b_order_channel, shipping_distributed_per_item, ts_str
+                    ])
+                try:
+                    bangles_log_worksheet.append_rows(c_rows)
+                    st.session_state.bangle_sales_cart = []
+                    st.success("Bangles complete order logged successfully!")
+                    st.rerun()
+                except Exception as err:
+                    st.error(f"Sync failed: {err}")
+
+    # --------------------------------------------------------------------------
+    # RIGHT COLUMN: GENERAL STALL JEWELRY SHOPPING CART WORKSPACE
+    # --------------------------------------------------------------------------
+    with term_c2:
+        st.markdown("### 📿 2. Jewelry Comma-Separated Desk")
+        jew_form_mode = st.radio("Select Action Category", options=["Purchase (Stock In)", "Add to Sales Cart (Stock Out)"], key="j_mode_rad", horizontal=True)
+        
+        st.markdown("##### 📝 Input SKU Variant Streams:")
+        with st.form("jewelry_comma_cart_form", clear_on_submit=True):
+            f_j_skus_str = st.text_input("SKU Codes List", placeholder="SKU001, SKU002, SKU003")
+            f_j_qtys_str = st.text_input("Quantities List", placeholder="1, 2, 1")
+            f_j_cp_str = st.text_input("Cost Price (CP) List", placeholder="200")
+            
+            f_j_sp_str = ""
+            if "Sales Cart" in jew_form_mode:
+                f_j_sp_str = st.text_input("Base Selling Price (SP) List", placeholder="300")
+                
+            if st.form_submit_button("Explode Jewelry Strings Into Cart List ➕"):
+                if not f_j_skus_str or not f_j_qtys_str or not f_j_cp_str:
+                    st.error("All fields are required.")
+                else:
+                    try:
+                        skus_parsed = [s.strip().upper() for s in f_j_skus_str.split(",") if s.strip()]
+                        qtys_parsed = [int(q.strip()) for q in f_j_qtys_str.split(",") if q.strip()]
+                        cp_parts = [float(p.strip()) for p in f_j_cp_str.split(",") if p.strip()]
+                        
+                        if len(cp_parts) == 1: cp_parsed = cp_parts * len(skus_parsed)
+                        else: cp_parsed = cp_parts
+                        
+                        if not (len(skus_parsed) == len(qtys_parsed) == len(cp_parsed)):
+                            st.error("❌ Length Mismatch! Check parameters counts.")
+                        else:
+                            all_skus_valid = True
+                            for s in skus_parsed:
+                                if s not in df_inventory[item_code_col].tolist():
+                                    st.error(f"❌ Missing Master SKU: '{s}' not found in General Inventory.")
+                                    all_skus_valid = False
+                                    break
+                            
+                            if all_skus_valid:
+                                if "Purchase" in jew_form_mode:
+                                    for s, q, cp in zip(skus_parsed, qtys_parsed, cp_parsed):
+                                        st.session_state.staged_jewelry_purchases.append({
+                                            "SKU": s, "Quantity": q, "CP": cp
+                                        })
+                                    st.toast("Jewelry purchases staged!")
+                                else:
+                                    sp_parts = [float(p.strip()) for p in f_j_sp_str.split(",") if p.strip()]
+                                    if len(sp_parts) == 1: sp_parsed = sp_parts * len(skus_parsed)
+                                    else: sp_parsed = sp_parts
+                                    
+                                    if len(sp_parsed) != len(skus_parsed):
+                                        st.error("Selling Price list entry count doesn't match SKU entries.")
+                                    else:
+                                        for s, q, cp, sp in zip(skus_parsed, qtys_parsed, cp_parsed, sp_parsed):
+                                            r_idx = df_inventory[df_inventory[item_code_col] == s].index[0]
+                                            st.session_state.jewelry_sales_cart.append({
+                                                "SKU": s, "Category": df_inventory.at[r_idx, item_type_col],
+                                                "Quantity": q, "Base SP": sp, "CP": cp, "Row Index": r_idx
+                                            })
+                                        st.toast("Jewelry variants added to cart!")
+                    except ValueError:
+                        st.error("Formatting Error: Check inputs.")
+
+        if st.session_state.staged_jewelry_purchases:
+            st.write("---")
+            st.markdown("##### Staged Jewelry Bulk Purchases Preview")
+            df_j_p_view = pd.DataFrame(st.session_state.staged_jewelry_purchases)
+            st.dataframe(df_j_p_view, width="stretch", hide_index=True)
+            
+            if st.button("Commit Staged Jewelry Purchases 🚀", key="commit_j_p"):
+                total_procurement_investment_sum = 0.0
+                ts_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                memo_description_parts = []
+                
+                for entry in st.session_state.staged_jewelry_purchases:
+                    r_idx = df_inventory[df_inventory[item_code_col] == entry["SKU"]].index[0]
+                    current_stock = int(pd.to_numeric(df_inventory.at[r_idx, remaining_qty_col], errors='coerce'))
+                    df_inventory.at[r_idx, remaining_qty_col] = str(current_stock + entry["Quantity"])
+                    
+                    line_sum = entry["Quantity"] * entry["CP"]
+                    total_procurement_investment_sum += line_sum
+                    memo_description_parts.append(f"{entry['SKU']} (Qty {entry['Quantity']} @ CP ₹{entry['CP']})")
+                
+                next_exp_id = len(df_expenses) + 1
+                combined_memo = f"Bulk Stock In Procurement: " + ", ".join(memo_description_parts)
+                
+                try:
+                    inventory_worksheet.clear()
+                    inventory_worksheet.update('A1', [df_inventory.columns.values.tolist()] + df_inventory.astype(str).values.tolist())
+                    expense_worksheet.append_rows([[next_exp_id, "Direct Inventory Procurement", "Jewelry", total_procurement_investment_sum, combined_memo, ts_now]])
+                    st.session_state.staged_jewelry_purchases = []
+                    st.success(f"Stock In Completed! Procurement cost of ₹{total_procurement_investment_sum:,.2f} logged as an expense.")
+                    st.rerun()
+                except Exception as err:
+                    st.error(f"Cloud update failed: {err}")
+
+        if st.session_state.jewelry_sales_cart:
+            st.write("---")
+            st.markdown("##### 🛒 Active Jewelry Sales Cart")
+            df_j_cart = pd.DataFrame(st.session_state.jewelry_sales_cart)
+            st.dataframe(df_j_cart[["SKU", "Category", "Quantity", "Base SP"]], width="stretch", hide_index=True)
+            
+            st.markdown("🗣️ **Order-Level Financial Parameters Adjustment**")
+            j_order_discount = st.number_input("Order Discount Percentage (%)", min_value=0.0, max_value=100.0, step=1.0, value=0.0, key="j_disc_f")
+            
+            j_c1, j_c2 = st.columns(2)
+            if j_c1.button("Clear Jewelry Sales Cart 🗑️", key="clear_j_s"):
+                st.session_state.jewelry_sales_cart = []
+                st.rerun()
+                
+            if j_c2.button("Process Complete Jewelry Order 🚀", type="primary", key="commit_j_s"):
+                timestamp_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                next_order_id = len(df_sales) + 1
+                
+                stock_valid = True
+                for item in st.session_state.jewelry_sales_cart:
+                    r_idx = item["Row Index"]
+                    curr_stock = int(pd.to_numeric(df_inventory.at[r_idx, remaining_qty_col], errors='coerce'))
+                    if curr_stock < item["Quantity"]:
+                        st.error(f"Transaction Denied: SKU {item['SKU']} has insufficient available stock.")
+                        stock_valid = False
+                        break
+                
+                if stock_valid:
+                    for item in st.session_state.jewelry_sales_cart:
+                        r_idx = item["Row Index"]
+                        curr_stock = int(pd.to_numeric(df_inventory.at[r_idx, remaining_qty_col], errors='coerce'))
+                        df_inventory.at[r_idx, remaining_qty_col] = str(curr_stock - item["Quantity"])
+                        
+                        for _ in range(item["Quantity"]):
+                            final_discounted_item_revenue = item["Base SP"] * (1.0 - (j_order_discount / 100.0))
+                            new_row_dict = {
+                                "Order ID": next_order_id, "Item Code": item["SKU"], "Item Type": item["Category"],
+                                "Original Price (₹)": item["Base SP"], "Discount (%)": j_order_discount,
+                                "Final Revenue (₹)": final_discounted_item_revenue, "Cost Price (₹)": item["CP"], "Timestamp": timestamp_str
+                            }
+                            df_sales = pd.concat([df_sales, pd.DataFrame([new_row_dict])], ignore_index=True)
+                    
+                    try:
+                        inventory_worksheet.clear()
+                        inventory_worksheet.update('A1', [df_inventory.columns.values.tolist()] + df_inventory.astype(str).values.tolist())
+                        sales_worksheet.clear()
+                        sales_worksheet.update('A1', [df_sales.columns.values.tolist()] + df_sales.astype(str).values.tolist())
+                        st.session_state.jewelry_sales_cart = []
+                        st.success("Jewelry complete multi-product order logged successfully!")
+                        st.rerun()
+                    except Exception as cloud_err:
+                        st.error(f"Cloud update failed: {cloud_err}")
+
+# ==============================================================================
+# --- PAGES 4 & 5: EXPENSE LEDGER & MASTER DATABASE VIEWERS ---
+# ==============================================================================
+with p4:
+    st.subheader("💸 Streamlined Operating Cost Allocation Board")
+    with st.form("streamlined_free_text_expense_form", clear_on_submit=True):
+        f_exp_desc = st.text_input("Type Expense Memo Description Here", placeholder="e.g. Train ticket from BLR to HYD, Shipment - kavya, Airbnb lodging")
+        f_exp_amt = st.number_input("Transaction Cash Outflow Value (₹)", min_value=0.0, step=50.0, format="%.2f")
+        
+        if st.form_submit_button("Commit Free-Text Outflow Entry 💸"):
+            if f_exp_amt <= 0 or not f_exp_desc:
+                st.error("Provide a valid description text and amount.")
+            else:
+                assigned_segment, assigned_category = auto_classify_expense(f_exp_desc)
+                next_id = len(df_expenses) + 1
+                ts_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                
+                expense_worksheet.append_rows([[next_id, assigned_category, assigned_segment, f_exp_amt, f_exp_desc, ts_now]])
+                st.success(f"Success! Auto-Grouped to category segment **{assigned_segment}** under category: *{assigned_category}*")
+                st.rerun()
+
+    st.write("---")
+    st.markdown("#### Complete Reconciled Historical Expense Table Logs")
+    if df_expenses.empty: st.info("No logs found.")
+    else: st.dataframe(df_expenses.sort_values(by="Expense ID", ascending=False), width="stretch", hide_index=True)
+
+with p5:
+    st.subheader("📦 Real-Time Cloud Sheet Sheet-Tab View Data Blocks")
+    m_tabs = st.radio("Select Target Sheet-Tab View", options=["General Inventory (Tab 2)", "General Sales Log (Tab 3)", "Bangles Detailed Master Ingestion (Tab 5)"], horizontal=True)
+    if "Tab 2" in m_tabs: st.dataframe(df_inventory, width="stretch", hide_index=True)
+    elif "Tab 3" in m_tabs: st.dataframe(df_sales, width="stretch", hide_index=True)
+    else: st.dataframe(df_bangles_detailed, width="stretch", hide_index=True)
