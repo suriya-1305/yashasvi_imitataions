@@ -195,7 +195,6 @@ if not df_b_detailed_clean.empty:
 else:
     df_computed_bangles_master = pd.DataFrame(columns=["Model (Bangle Name)", "Colour Variant", "Size", "Total Purchased", "Total Sold", "Available Stock Volume"])
 
-# Compute absolute total sums for high-level cards
 global_bangle_units_available = int(df_computed_bangles_master["Available Stock Volume"].sum()) if not df_computed_bangles_master.empty else 0
 
 # --- THE 5-PAGE RECONCILED RUNTIME CONTROL ---
@@ -208,7 +207,7 @@ p1, p2, p3, p4, p5 = st.tabs([
 ])
 
 # ==============================================================================
-# --- PAGE 1: BUSINESS EXECUTIVE DASHBOARD (WITH UNIT SUMMARY REVENUE CARDS) ---
+# --- PAGE 1: BUSINESS EXECUTIVE DASHBOARD ---
 # ==============================================================================
 with p1:
     st.subheader("📊 Reconciled Multi-Channel Financial Engine")
@@ -245,8 +244,6 @@ with p1:
     
     with col_chan1:
         st.markdown("### ⭕ Bangles Catalog Performance (Omnichannel)")
-        
-        # ADDED: Integrated unit tracking cards inside the executive overview panel
         ub1, ub2 = st.columns(2)
         ub1.metric("Bangles Units Sold", f"{len(df_b_sales)} Pcs")
         ub2.metric("Bangles Remaining Stock", f"{global_bangle_units_available} Pcs")
@@ -282,8 +279,6 @@ with p1:
 
     with col_chan2:
         st.markdown("### 📿 Jewelry Catalog Performance (Stall Engine)")
-        
-        # Added symmetric piece matching metrics for jewelry lot catalogs
         jewelry_units_total = len(df_sales)
         uj1, uj2 = st.columns(2)
         uj1.metric("Jewelry Units Sold", f"{jewelry_units_total} Pcs")
@@ -313,12 +308,10 @@ with p1:
             st.info("Awaiting jewelry sales logs to map parameters.")
 
 # ==============================================================================
-# --- PAGE 2: BANGLES STOCK & QUERY DESK (WITH COMPREHENSIVE VOLUMES) ---
+# --- PAGE 2: BANGLES STOCK & QUERY DESK ---
 # ==============================================================================
 with p2:
     st.subheader("⭕ Granular Bangles Color-Model Matrix & Query Terminal")
-    
-    # ADDED: Highly scannable high-level counter displaying total inventory on hand
     st.metric("Total Physical Bangle Stock Volume (All Variations Combined)", f"{global_bangle_units_available} Units Available")
     st.write("---")
 
@@ -361,12 +354,15 @@ with p2:
     st.dataframe(df_computed_bangles_master, width="stretch", hide_index=True)
 
 # ==============================================================================
-# --- PAGE 3: FAST CHECKOUT TERMINAL ---
+# --- PAGE 3: FAST CHECKOUT TERMINAL (SMART BROADCASTING IMPLEMENTATION) ---
 # ==============================================================================
 with p3:
     st.subheader("🎯 Active Product Shopping Carts (Order-Level Financial Controls)")
     term_c1, term_c2 = st.columns(2)
     
+    # --------------------------------------------------------------------------
+    # LEFT COLUMN: OMNICHANNEL BANGLES SHOPPING CART WORKSPACE
+    # --------------------------------------------------------------------------
     with term_c1:
         st.markdown("### ⭕ 1. Bangles Comma-Separated Desk")
         bangle_form_mode = st.radio("Select Action Category", options=["Purchase (Stock In)", "Add to Sales Cart (Stock Out)"], horizontal=True)
@@ -375,8 +371,8 @@ with p3:
         st.markdown("##### 📝 Input Variant Streams:")
         with st.form("bangle_cart_item_form", clear_on_submit=True):
             f_b_colors_str = st.text_input("Colours List", placeholder="pink, maroon, gold")
-            f_b_sizes_str = st.text_input("Sizes List", placeholder="2.4, 2.6, 2.8")
-            f_b_qtys_str = st.text_input("Quantities List", placeholder="1, 2, 1")
+            f_b_sizes_str = st.text_input("Sizes List", placeholder="2.4, 2.6, 2.8 (or single value like 2.6)")
+            f_b_qtys_str = st.text_input("Quantities List", placeholder="1, 2, 1 (or single value like 1)")
             f_b_cp_str = st.text_input("Cost Price (CP) List", placeholder="110")
             
             f_b_sp_str = ""
@@ -385,42 +381,46 @@ with p3:
                 
             if st.form_submit_button("Explode Variant Strings Into Cart List ➕"):
                 if not f_b_name or not f_b_colors_str or not f_b_sizes_str or not f_b_qtys_str or not f_b_cp_str:
-                    st.error("Model Name and all comma-separated fields are mandatory.")
+                    st.error("Model Name and all list input blocks are required.")
                 else:
                     try:
                         colors_parsed = [c.strip().upper() for c in f_b_colors_str.split(",") if c.strip()]
-                        sizes_parsed = [s.strip() for s in f_b_sizes_str.split(",") if s.strip()]
-                        qtys_parsed = [int(q.strip()) for q in f_b_qtys_str.split(",") if q.strip()]
+                        sizes_parts = [s.strip() for s in f_b_sizes_str.split(",") if s.strip()]
+                        qtys_parts = [int(q.strip()) for q in f_b_qtys_str.split(",") if q.strip()]
                         cp_parts = [float(p.strip()) for p in f_b_cp_str.split(",") if p.strip()]
                         
-                        if len(cp_parts) == 1: cp_parsed = cp_parts * len(colors_parsed)
-                        else: cp_parsed = cp_parts
+                        N = len(colors_parsed)
+                        
+                        # --- FIXED: BROADCAST ENGINE FOR BANGLES ---
+                        sizes_parsed = sizes_parts * N if len(sizes_parts) == 1 else sizes_parts
+                        qtys_parsed = qtys_parts * N if len(qtys_parts) == 1 else qtys_parts
+                        cp_parsed = cp_parts * N if len(cp_parts) == 1 else cp_parts
                             
                         if not (len(colors_parsed) == len(sizes_parsed) == len(qtys_parsed) == len(cp_parsed)):
-                            st.error(f"❌ Length Mismatch! Check list fields entry count alignment bounds.")
+                            st.error(f"❌ Length Mismatch! Colors ({len(colors_parsed)}), Sizes ({len(sizes_parsed)}), Quantities ({len(qtys_parsed)}), Costs ({len(cp_parsed)}). Ensure values align or use a single item to broadcast.")
                         else:
                             if "Purchase" in bangle_form_mode:
                                 for c, s, q, cp in zip(colors_parsed, sizes_parsed, qtys_parsed, cp_parsed):
                                     st.session_state.staged_bangle_purchases.append({
                                         "Bangle Name": f_b_name, "Colour": c, "Size": s, "Quantity": q, "CP": cp
                                     })
-                                st.toast("Bulk purchases staged!")
+                                st.toast("Bulk purchases loaded into local staging buffer!")
                             else:
                                 sp_parts = [float(p.strip()) for p in f_b_sp_str.split(",") if p.strip()]
-                                if len(sp_parts) == 1: sp_parsed = sp_parts * len(colors_parsed)
-                                else: sp_parsed = sp_parts
+                                sp_parsed = sp_parts * N if len(sp_parts) == 1 else sp_parts
                                     
                                 if len(sp_parsed) != len(colors_parsed):
-                                    st.error("Selling Price list entry count alignment error.")
+                                    st.error("Selling Price matrix alignment dimensions mismatched.")
                                 else:
                                     for c, s, q, cp, sp in zip(colors_parsed, sizes_parsed, qtys_parsed, cp_parsed, sp_parsed):
                                         st.session_state.bangle_sales_cart.append({
                                             "Bangle Name": f_b_name, "Colour": c, "Size": s, "Quantity": q, "CP": cp, "Base SP": sp
                                         })
-                                    st.toast("Bulk variants added to sales cart!")
+                                    st.toast("Bulk variants appended directly into order sales cart!")
                     except ValueError:
-                        st.error("Formatting Error: Check your integer values and numeric prices.")
+                        st.error("Formatting Mismatch: Ensure numeric fields are entered correctly.")
 
+        # Display and handle Bangle Purchases Commit
         if st.session_state.staged_bangle_purchases:
             st.write("---")
             st.markdown("##### Staged Bulk Purchases Preview")
@@ -438,6 +438,7 @@ with p3:
                 st.success("Purchases saved successfully!")
                 st.rerun()
 
+        # Display, Order-Level Properties, and Commit for Bangle Sales Cart
         if st.session_state.bangle_sales_cart:
             st.write("---")
             st.markdown("##### 🛒 Active Bangles Sales Cart")
@@ -485,7 +486,7 @@ with p3:
                     st.error(f"Sync failed: {err}")
 
     # --------------------------------------------------------------------------
-    # RIGHT COLUMN: GENERAL STALL JEWELRY SHOPPING CART WORKSPACE
+    # RIGHT COLUMN: GENERAL STALL JEWELRY COMMA-SEPARATED WORKSPACE
     # --------------------------------------------------------------------------
     with term_c2:
         st.markdown("### 📿 2. Jewelry Comma-Separated Desk")
@@ -494,7 +495,7 @@ with p3:
         st.markdown("##### 📝 Input SKU Variant Streams:")
         with st.form("jewelry_comma_cart_form", clear_on_submit=True):
             f_j_skus_str = st.text_input("SKU Codes List", placeholder="SKU001, SKU002, SKU003")
-            f_j_qtys_str = st.text_input("Quantities List", placeholder="1, 2, 1")
+            f_j_qtys_str = st.text_input("Quantities List", placeholder="1, 2, 1 (or single value like 1)")
             f_j_cp_str = st.text_input("Cost Price (CP) List", placeholder="200")
             
             f_j_sp_str = ""
@@ -503,18 +504,21 @@ with p3:
                 
             if st.form_submit_button("Explode Jewelry Strings Into Cart List ➕"):
                 if not f_j_skus_str or not f_j_qtys_str or not f_j_cp_str:
-                    st.error("All fields are required.")
+                    st.error("All comma-separated validation fields are required.")
                 else:
                     try:
                         skus_parsed = [s.strip().upper() for s in f_j_skus_str.split(",") if s.strip()]
-                        qtys_parsed = [int(q.strip()) for q in f_j_qtys_str.split(",") if q.strip()]
+                        qtys_parts = [int(q.strip()) for q in f_j_qtys_str.split(",") if q.strip()]
                         cp_parts = [float(p.strip()) for p in f_j_cp_str.split(",") if p.strip()]
                         
-                        if len(cp_parts) == 1: cp_parsed = cp_parts * len(skus_parsed)
-                        else: cp_parsed = cp_parts
+                        N_j = len(skus_parsed)
+                        
+                        # --- FIXED: BROADCAST ENGINE FOR JEWELRY ---
+                        qtys_parsed = qtys_parts * N_j if len(qtys_parts) == 1 else qtys_parts
+                        cp_parsed = cp_parts * N_j if len(cp_parts) == 1 else cp_parts
                         
                         if not (len(skus_parsed) == len(qtys_parsed) == len(cp_parsed)):
-                            st.error("❌ Length Mismatch! Check parameters counts.")
+                            st.error("❌ Length Mismatch! Align element columns count matching parameters.")
                         else:
                             all_skus_valid = True
                             for s in skus_parsed:
@@ -529,14 +533,13 @@ with p3:
                                         st.session_state.staged_jewelry_purchases.append({
                                             "SKU": s, "Quantity": q, "CP": cp
                                         })
-                                    st.toast("Jewelry purchases staged!")
+                                    st.toast("Jewelry bulk lines parsed and staged!")
                                 else:
                                     sp_parts = [float(p.strip()) for p in f_j_sp_str.split(",") if p.strip()]
-                                    if len(sp_parts) == 1: sp_parsed = sp_parts * len(skus_parsed)
-                                    else: sp_parsed = sp_parts
+                                    sp_parsed = sp_parts * N_j if len(sp_parts) == 1 else sp_parts
                                     
                                     if len(sp_parsed) != len(skus_parsed):
-                                        st.error("Selling Price list entry count doesn't match SKU entries.")
+                                        st.error("Selling Price line matrix entries counts mismatch error.")
                                     else:
                                         for s, q, cp, sp in zip(skus_parsed, qtys_parsed, cp_parsed, sp_parsed):
                                             r_idx = df_inventory[df_inventory[item_code_col] == s].index[0]
@@ -544,10 +547,11 @@ with p3:
                                                 "SKU": s, "Category": df_inventory.at[r_idx, item_type_col],
                                                 "Quantity": q, "Base SP": sp, "CP": cp, "Row Index": r_idx
                                             })
-                                        st.toast("Jewelry variants added to cart!")
+                                        st.toast("Jewelry variants logged into cart list variables!")
                     except ValueError:
-                        st.error("Formatting Error: Check inputs.")
+                        st.error("Formatting Mismatch: Ensure prices and whole integer lists map flawlessly.")
 
+        # Display and handle Jewelry Bulk Purchases (Stock In) Commit
         if st.session_state.staged_jewelry_purchases:
             st.write("---")
             st.markdown("##### Staged Jewelry Bulk Purchases Preview")
@@ -581,6 +585,7 @@ with p3:
                 except Exception as err:
                     st.error(f"Cloud update failed: {err}")
 
+        # Display, Order-Level Properties, and Commit for Jewelry Sales Cart
         if st.session_state.jewelry_sales_cart:
             st.write("---")
             st.markdown("##### 🛒 Active Jewelry Sales Cart")
